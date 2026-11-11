@@ -32,7 +32,7 @@ final class LogoStore {
     }()
 
     /// The logo for a team, or nil while it loads (or if there isn't one).
-    func attachment(for teamID: String, font: NSFont) -> NSTextAttachment? {
+    func attachment(for teamID: String, abbr: String? = nil, font: NSFont) -> NSTextAttachment? {
         if let a = attachments[teamID] { return a }
         guard !teamID.isEmpty, !teamID.hasPrefix("-"), !missing.contains(teamID), loading.insert(teamID).inserted else { return nil }
         let file = cacheDir.appendingPathComponent("\(teamID).png")
@@ -41,7 +41,7 @@ final class LogoStore {
             return store(img, for: teamID, font: font)
         }
         Task {
-            let (data, notFound) = await Self.download(teamID)
+            let (data, notFound) = await Self.download(teamID, abbr: abbr)
             loading.remove(teamID)
             // A network hiccup gets retried on a later redraw; only a real 404 is remembered.
             guard let data, let img = NSImage(data: data) else { if notFound { missing.insert(teamID) }; return }
@@ -71,10 +71,10 @@ final class LogoStore {
         }
     }
 
-    private nonisolated static func download(_ teamID: String) async -> (Data?, notFound: Bool) {
+    private nonisolated static func download(_ teamID: String, abbr: String?) async -> (Data?, notFound: Bool) {
         var notFound = true
         for variant in ["500-dark", "500"] {
-            guard let url = URL(string: "https://a.espncdn.com/combiner/i?img=/i/teamlogos/nfl/\(variant)/\(teamID).png&w=64&h=64"),
+            guard let url = URL(string: "https://a.espncdn.com/combiner/i?img=/i/teamlogos/nfl/\(variant)/\(abbr?.lowercased() ?? teamID).png&w=64&h=64"),
                   let (data, resp) = try? await URLSession.shared.data(from: url) else { notFound = false; continue }
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if code == 200, !data.isEmpty { return (data, false) }

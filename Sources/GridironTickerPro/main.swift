@@ -78,7 +78,7 @@ func buildTickerSegments(_ games: [Game], followed: Set<String>, font: NSFont, s
         out.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c]))
     }
     func team(_ s: Side, showScore: Bool, live: Bool) {
-        if Prefs.showLogos, let logo = LogoStore.shared.attachment(for: s.teamID, font: font) {
+        if Prefs.showLogos, let logo = LogoStore.shared.attachment(for: s.teamID, abbr: s.abbr, font: font) {
             out.append(NSAttributedString(attachment: logo))
             add(" ", Palette.dim)
         }

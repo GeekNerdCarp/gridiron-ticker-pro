@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${GRIDIRON_VERSION:-0.1.0}"
+VERSION="${GRIDIRON_VERSION:-1.0.0}"
 BUILD="${GRIDIRON_BUILD:-1}"     # must go up with every release: Sparkle compares it to decide what's newer
 BUNDLE_ID="${GRIDIRON_BUNDLE_ID:-app.gridirontickerpro.mac}"
 FEED_URL="${GRIDIRON_FEED_URL:-https://github.com/GeekNerdCarp/gridiron-ticker-pro/releases/latest/download/appcast.xml}"
