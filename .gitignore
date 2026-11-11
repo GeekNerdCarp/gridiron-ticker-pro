@@ -1,0 +1,6 @@
+.build/
+dist/
+dmgroot/
+*.dmg
+.DS_Store
+.swiftpm/
