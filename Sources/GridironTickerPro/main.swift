@@ -82,8 +82,6 @@ func buildTickerSegments(_ games: [Game], followed: Set<String>, font: NSFont, s
             out.append(NSAttributedString(attachment: logo))
             add(" ", Palette.dim)
         }
-        if let r = s.rank { add("#\(r) ", Palette.rank) }
-        else if let seed = s.seed { add("(\(seed)) ", Palette.rank) }
         add(s.name.uppercased(), followed.contains(s.teamID) ? Palette.favorite : Palette.name)
         if Prefs.showRecords, let rec = s.record, !rec.isEmpty { add(" (\(rec))", Palette.dim) }
         if showScore, let sc = s.score { add(" \(sc)", live ? Palette.liveScore : Palette.score) }
@@ -587,9 +585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         refreshTask = Task { await refreshLoop() }
         Task { await lookaheadLoop() }
-        Task { await top25Loop() }
         Task { await loadTeams() }
-        Task { await loadConferences() }
         alerts.start()
         if ProcessInfo.processInfo.environment["GRIDIRON_DEBUG"] != nil {
             DispatchQueue.main.asyncAfter(deadline: .now() + 4) { self.settings.show() }
@@ -693,7 +689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             } else {
                 do {
-                    games = try await ESPN.fetchToday(group: Prefs.conferenceID ?? 50, alsoTeams: Set(Prefs.followedIDs))
+                    games = try await ESPN.fetchToday()
                     lastUpdate = Date()
                     lastFullRefresh = Date()
                     lastError = nil
@@ -736,16 +732,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return g.state == .upcoming && untilTip < 5 * 60 && untilTip > -3 * 3600 ? g : nil
     }
 
-    /// The conference changed: fetch today and the days ahead again and start from the left.
-    private func reloadEverything() {
-        restartRefreshLoop()
-        Task {
-            lookahead = await ESPN.fetchLookahead(days: lookaheadDays, group: Prefs.conferenceID ?? 50)
-            render()
-            ticker.resetToStart()
-        }
-    }
-
     /// Restart the refresh loop so a new mode takes effect now rather than after its current sleep.
     private func restartRefreshLoop() {
         refreshTask?.cancel()
@@ -755,7 +741,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func lookaheadLoop() async {
         var first = true
         while true {
-            lookahead = await ESPN.fetchLookahead(days: lookaheadDays, group: Prefs.conferenceID ?? 50)
+            lookahead = await ESPN.fetchLookahead()
             await refreshScheduleNext()
             render()
             // On launch, a favorite that isn't playing today only appears once lookahead arrives.
@@ -769,23 +755,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var out: [String: Game] = [:]
         for id in Prefs.followedIDs { if let g = try? await ESPN.fetchNextGame(teamID: id) { out[id] = g } }
         scheduleNext = out
-    }
-
-    private func top25Loop() async {
-        while true {
-            if let poll = try? await ESPN.fetchPoll(), !poll.teams.isEmpty {
-                settings.setTop25(poll.teams)
-                alerts.observePoll(poll, followed: Set(Prefs.followedIDs))
-            }
-            try? await Task.sleep(nanoseconds: 30 * 60 * 1_000_000_000)
-        }
-    }
-
-    private func loadConferences() async {
-        for attempt in 0..<5 {
-            if let c = try? await ESPN.fetchConferences(), !c.isEmpty { settings.setConferences(c); return }
-            try? await Task.sleep(nanoseconds: UInt64(10 + attempt * 20) * 1_000_000_000)
-        }
     }
 
     private func loadTeams() async {
@@ -803,7 +772,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Builds the ticker's game list: favorite first, then live, upcoming, finals.
     private func visibleGames() -> [Game] {
         var list = games
-        if Prefs.rankedOnly { list = list.filter { $0.isRanked } }
         if !Prefs.showFinals { list = list.filter { $0.state != .final } }
         if !Prefs.showUpcoming { list = list.filter { $0.state != .upcoming } }
 
@@ -812,18 +780,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             // Nothing left to play today: show the next day that has games.
             if !games.contains(where: { $0.state != .final }),
                let day = lookahead.first(where: { !$0.isEmpty }) {
-                for g in day where (!Prefs.rankedOnly || g.isRanked) && ids.insert(g.id).inserted {
+                for g in day where ids.insert(g.id).inserted {
                     list.append(g)
                 }
-            }
-            // Every Top 25 team not playing today gets its next game, however many days out.
-            var covered = Set(games.flatMap { [$0.away.teamID, $0.home.teamID] })
-            let ahead = lookahead.joined().filter { $0.state == .upcoming && $0.isRanked }.sorted { $0.start < $1.start }
-            for g in ahead {
-                let rankedTeams = [g.away, g.home].filter { $0.rank != nil }.map { $0.teamID }
-                guard rankedTeams.contains(where: { !covered.contains($0) }) else { continue }
-                covered.formUnion(rankedTeams)
-                if ids.insert(g.id).inserted { list.append(g) }
             }
         }
 
@@ -853,7 +812,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         list.sort {
             if order($0) != order($1) { return order($0) < order($1) }
             if $0.state == .upcoming, $0.start != $1.start { return $0.start < $1.start }
-            if $0.bestRank != $1.bestRank { return $0.bestRank < $1.bestRank }
             return $0.start < $1.start
         }
 
@@ -924,7 +882,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if ProcessInfo.processInfo.environment["GRIDIRON_DEBUG"] != nil {
             print("--- render: \(list.count) games, lookahead days loaded: \(lookahead.filter { !$0.isEmpty }.count)")
             for g in list.prefix(200) {
-                print(" ", g.state, g.away.rank.map { "#\($0)" } ?? "", g.away.name, "@", g.home.rank.map { "#\($0)" } ?? "", g.home.name, "|", g.detail)
+                print(" ", g.state, g.away.name, "@", g.home.name, "|", g.detail)
             }
             fflush(stdout)
         }
@@ -982,8 +940,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 ticker.resetToStart()
             }
             restartRefreshLoop()   // the "also show followed teams' games" fetch depends on who's followed
-        case .conference:
-            reloadEverything()
         }
     }
 
@@ -1044,10 +1000,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     @objc private func refreshNow() {
         Task {
-            if let g = try? await ESPN.fetchToday(group: Prefs.conferenceID ?? 50, alsoTeams: Set(Prefs.followedIDs)) {
+            if let g = try? await ESPN.fetchToday() {
                 games = g; lastUpdate = Date(); lastError = nil
             }
-            lookahead = await ESPN.fetchLookahead(days: lookaheadDays, group: Prefs.conferenceID ?? 50)
+            lookahead = await ESPN.fetchLookahead()
             await refreshScheduleNext()
             render()
         }

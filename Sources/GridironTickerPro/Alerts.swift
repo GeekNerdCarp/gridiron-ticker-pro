@@ -41,9 +41,7 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
     func message(_ e: Event, _ g: Game, favoriteID: String) -> (title: String, body: String) {
         let mine = g.away.teamID == favoriteID ? g.away : g.home
         let other = g.away.teamID == favoriteID ? g.home : g.away
-        func label(_ s: Side) -> String {
-            (s.rank.map { "#\($0) " } ?? s.seed.map { "(\($0)) " } ?? "") + s.name
-        }
+        func label(_ s: Side) -> String { s.name }
         func score(_ s: Side) -> String { "\(s.name) \(s.score ?? "0")" }
         let line = "\(score(g.away)), \(score(g.home))"
         let tv = g.network.map { " · \($0)" } ?? ""
@@ -85,44 +83,6 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
             UNNotificationRequest(identifier: "\(g.id)-\(e)", content: content, trigger: nil))
     }
 
-    // MARK: AP poll
-
-    /// A new AP poll came out: say how your followed teams moved (or the top three, if none of them are in it).
-    /// The first poll ever seen, a poll we already told you about, and a poll over four days old stay quiet.
-    /// Returns the text sent, for testing.
-    @discardableResult
-    func observePoll(_ poll: AppPoll, followed: Set<String>, now: Date = Date()) -> (title: String, body: String)? {
-        let defaults = UserDefaults.standard
-        let last = defaults.string(forKey: "lastPollID")
-        guard !poll.id.isEmpty else { return nil }
-        defaults.set(poll.id, forKey: "lastPollID")
-        guard let last, last != poll.id, Prefs.pollAlerts else { return nil }
-        if let date = poll.date, now.timeIntervalSince(date) > 4 * 86400 { return nil }
-
-        var lines: [String] = []
-        for t in poll.teams where followed.contains(t.id) {
-            let before = t.previous ?? 0
-            if before == 0 { lines.append("\(t.name) enters the poll at #\(t.rank)") }
-            else if before > t.rank { lines.append("\(t.name) moves up \(before - t.rank) to #\(t.rank)") }
-            else if before < t.rank { lines.append("\(t.name) drops \(t.rank - before) to #\(t.rank)") }
-            else { lines.append("\(t.name) holds at #\(t.rank)") }
-        }
-        for t in poll.dropped where followed.contains(t.id) { lines.append("\(t.name) falls out of the poll") }
-        if lines.isEmpty {
-            lines = [poll.teams.sorted { $0.rank < $1.rank }.prefix(3).map { "#\($0.rank) \($0.name)" }.joined(separator: " · ")]
-        }
-        let title = "🏈 New AP Top 25" + (poll.title.isEmpty ? "" : " · \(poll.title)")
-        let body = lines.joined(separator: "\n")
-
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        content.sound = .default
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: "poll-\(poll.id)", content: content, trigger: nil))
-        return (title, body)
-    }
-
     // MARK: Reminders
 
     private var reminded = Set<String>()
@@ -140,7 +100,7 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
             guard until > 0, until <= Double(mins) * 60, reminded.insert(g.id).inserted else { continue }
             out.append(g.id)
             let mine = followed.contains(g.away.teamID) ? g.away : g.home
-            func label(_ s: Side) -> String { (s.rank.map { "#\($0) " } ?? s.seed.map { "(\($0)) " } ?? "") + s.name }
+            func label(_ s: Side) -> String { s.name }
             let content = UNMutableNotificationContent()
             let left = max(1, Int((until / 60).rounded()))
             content.title = "🏈 \(mine.name) kicks off in \(left) min"

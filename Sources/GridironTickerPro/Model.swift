@@ -22,7 +22,6 @@ struct CompetitorJSON: Decodable {
     let homeAway: String
     let score: String?
     let team: Tm
-    let curatedRank: Rk?
     let record: String?   // overall, e.g. "2-0"
     struct Tm: Decodable {
         let id: String
@@ -30,16 +29,14 @@ struct CompetitorJSON: Decodable {
         let shortDisplayName: String?
         let abbreviation: String?
     }
-    struct Rk: Decodable { let current: Int }
 
     /// Scoreboard: records[{type:"total", summary}]. Team schedule: record[{type:"total", displayValue}].
     private struct Rec: Decodable { let type: String?; let summary: String?; let displayValue: String? }
-    enum CodingKeys: String, CodingKey { case homeAway, score, team, curatedRank, records, record }
+    enum CodingKeys: String, CodingKey { case homeAway, score, team, records, record }
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         homeAway = try c.decode(String.self, forKey: .homeAway)
         team = try c.decode(Tm.self, forKey: .team)
-        curatedRank = try? c.decode(Rk.self, forKey: .curatedRank)
         let recs = (try? c.decode([Lossy<Rec>].self, forKey: .records))
             ?? (try? c.decode([Lossy<Rec>].self, forKey: .record)) ?? []
         let total = recs.compactMap { $0.value }.first { $0.type == "total" }
@@ -129,39 +126,6 @@ struct TeamsResponse: Decodable {
     struct T: Decodable { let id: String; let displayName: String; let color: String?; let alternateColor: String? }
 }
 
-struct ConferencesResponse: Decodable {
-    let conferences: [C]
-    struct C: Decodable { let name: String; let shortName: String?; let groupId: String }
-}
-
-struct Conference {
-    let id: Int
-    let name: String
-}
-
-struct RankingsResponse: Decodable {
-    let rankings: [Poll]
-    struct Poll: Decodable {
-        let name: String
-        let headline: String?
-        let date: String?
-        let ranks: [Rank]
-        let droppedOut: [Lossy<Dropped>]?
-    }
-    struct Rank: Decodable {
-        let current: Int
-        let previous: Int?
-        let recordSummary: String?
-        let team: T
-    }
-    struct Dropped: Decodable { let team: T }
-    struct T: Decodable {
-        let id: String?
-        let location: String
-        let nickname: String?
-    }
-}
-
 // MARK: - App model
 
 enum GameState { case live, upcoming, final }
@@ -169,10 +133,8 @@ enum GameState { case live, upcoming, final }
 struct Side {
     let teamID: String
     let name: String
-    let rank: Int?      // 1...25 AP rank, nil if unranked (or if this is an NCAA Tournament game)
     let score: String?
     var record: String? = nil
-    var seed: Int? = nil   // NCAA Tournament seed, 1...16
     var abbr: String? = nil   // e.g. "UK"
 }
 
@@ -191,9 +153,6 @@ struct Game {
     var clock: Double = 0
     var isHalftime = false
 
-    /// Best AP rank or tournament seed in the game; tournament games all count as "top" games.
-    var bestRank: Int { min(away.rank ?? away.seed ?? 99, home.rank ?? home.seed ?? 99) }
-    var isRanked: Bool { bestRank <= 25 }
     func involves(_ teamID: String) -> Bool { away.teamID == teamID || home.teamID == teamID }
 
     /// Points between the teams, if both scores are known.
@@ -211,49 +170,39 @@ struct Game {
         }
     }
 
-    /// A matchup worth circling: two AP top-10 teams, or in the NCAA Tournament two top-3 seeds
-    /// or anything from the Elite 8 on. Finished games don't count.
+    /// Win share from a record like "7-2" or "5-2-1" (a tie counts half), with games played.
+    private static func winShare(_ rec: String?) -> (pct: Double, games: Int)? {
+        let p = (rec ?? "").split(separator: "-").compactMap { Int($0) }
+        guard p.count >= 2 else { return nil }
+        let games = p.reduce(0, +)
+        guard games > 0 else { return nil }
+        return ((Double(p[0]) + Double(p.count > 2 ? p[2] : 0) / 2) / Double(games), games)
+    }
+    /// A matchup worth circling: both teams at .700 or better after six or more games. Finished games don't count.
     var isMarquee: Bool {
-        guard state != .final else { return false }
-        if let a = away.rank, let h = home.rank { return a <= 10 && h <= 10 }
-        if let a = away.seed, let h = home.seed {
-            return (a <= 3 && h <= 3) || ["ELITE 8", "FINAL FOUR", "CHAMPIONSHIP"].contains(round ?? "")
-        }
-        return false
+        guard state != .final,
+              let a = Game.winShare(away.record), let h = Game.winShare(home.record) else { return false }
+        return a.games >= 6 && h.games >= 6 && a.pct >= 0.7 && h.pct >= 0.7
+    }
+    /// ESPN's favorite and spread from the line, e.g. "HOU -10" -> ("HOU", 10). Nil for "EVEN" or no line.
+    var favorite: (abbr: String, spread: Double)? {
+        let parts = (odds ?? "").split(separator: " ")
+        guard parts.count == 2, let s = Double(parts[1]), s < 0 else { return nil }
+        return (String(parts[0]), -s)
     }
     /// Live, fourth quarter or overtime, 4:00 or less left, within one score (8 points).
     var isCloseLate: Bool {
         guard state == .live, period >= 4, clock <= 240, let m = margin else { return false }
         return m <= 8   // one possession
     }
-    /// Live in the second half or overtime, with an unranked team leading a ranked one.
+    /// Live in the second half or overtime, with a team favored by a touchdown or more trailing.
     var isUpsetBrewing: Bool {
-        guard state == .live, period >= 2, !isHalftime,
+        guard state == .live, period >= 3, !isHalftime, let fav = favorite, fav.spread >= 6.5,
               let a = Int(away.score ?? ""), let h = Int(home.score ?? "") else { return false }
-        if let sa = away.seed, let sh = home.seed {
-            // Tournament: a seed four or more lines worse is ahead.
-            return (sa - sh >= 4 && a > h) || (sh - sa >= 4 && h > a)
-        }
-        guard (away.rank == nil) != (home.rank == nil) else { return false }
-        return away.rank == nil ? a > h : h > a
+        if fav.abbr == away.abbr { return h > a }
+        if fav.abbr == home.abbr { return a > h }
+        return false
     }
-}
-
-struct RankedTeam {
-    let rank: Int
-    let name: String
-    let record: String
-    var id: String = ""
-    var previous: Int? = nil   // rank in the last poll; 0 or nil if it wasn't ranked
-}
-
-/// One week's AP poll.
-struct AppPoll {
-    let id: String          // changes every week
-    let title: String       // e.g. "Week 3"
-    let date: Date?
-    let teams: [RankedTeam]
-    let dropped: [(id: String, name: String)]
 }
 
 struct TeamInfo {
@@ -349,19 +298,18 @@ enum ESPN {
     }
 
     /// The week that contains `day`.
-    static func fetchBoard(on day: Date, group: Int = 0) async throws -> [Game] {
+    static func fetchBoard(on day: Date) async throws -> [Game] {
         let weeks = try await calendar()
         return try await fetchWeek(weeks[week(containing: day, in: weeks)])
     }
 
     /// What the ticker treats as "today": this NFL week's games, finished ones included.
-    /// (`group` and `alsoTeams` are kept for the callers; NFL has no conference filter.)
-    static func fetchToday(group: Int = 0, alsoTeams: Set<String> = []) async throws -> [Game] {
+    static func fetchToday() async throws -> [Game] {
         try await fetchBoard(on: Date())
     }
 
-    /// Next week's games, as element 0 (`days` is ignored). A failed fetch comes back empty.
-    static func fetchLookahead(days: Int, group: Int = 0) async -> [[Game]] {
+    /// Next week's games, as element 0. A failed fetch comes back empty.
+    static func fetchLookahead() async -> [[Game]] {
         guard let weeks = try? await calendar() else { return [[]] }
         let i = week(containing: Date(), in: weeks)
         guard i + 1 < weeks.count else { return [[]] }
@@ -384,18 +332,6 @@ enum ESPN {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// NFL has no conference filter or poll in v1 (a division filter may come later).
-    static func fetchConferences() async throws -> [Conference] { [] }
-    static func fetchTop25() async throws -> [RankedTeam] { [] }
-    static func fetchPoll() async throws -> AppPoll { AppPoll(id: "", title: "", date: nil, teams: [], dropped: []) }
-
-    /// "NCAA Men's Basketball Championship - East Region - Sweet 16" -> "SWEET 16".
-    private static func roundLabel(_ headline: String) -> String? {
-        guard let last = headline.components(separatedBy: " - ").last, !last.contains("Championship") || last == "National Championship"
-        else { return nil }
-        return (last == "National Championship" ? "CHAMPIONSHIP" : last).uppercased()
-    }
-
     private static func makeGame(_ e: Ev) -> Game? {
         guard let comp = e.competitions.first,
               let status = e.status ?? comp.status,
@@ -406,10 +342,8 @@ enum ESPN {
         func side(_ c: CompetitorJSON) -> Side {
             Side(teamID: c.team.id,
                  name: c.team.shortDisplayName ?? c.team.displayName,
-                 rank: nil,
                  score: c.score,
                  record: c.record,
-                 seed: nil,
                  abbr: c.team.abbreviation)
         }
         let start = startParser.date(from: e.date) ?? Date()

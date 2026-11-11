@@ -87,7 +87,7 @@ final class BoxScorePopover: NSObject {
             return t
         }
         func name(_ s: Side) -> String {
-            (s.rank.map { "#\($0) " } ?? s.seed.map { "(\($0)) " } ?? "") + s.name
+            s.name
         }
         func abbr(_ s: Side) -> String { s.abbr ?? s.name }
 

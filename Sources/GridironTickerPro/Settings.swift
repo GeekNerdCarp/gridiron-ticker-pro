@@ -9,10 +9,6 @@ enum Prefs {
         get { d.object(forKey: "speed") as? Double ?? 2.0 }
         set { d.set(newValue, forKey: "speed") }
     }
-    static var rankedOnly: Bool {
-        get { d.bool(forKey: "rankedOnly") }
-        set { d.set(newValue, forKey: "rankedOnly") }
-    }
     static var showFinals: Bool {
         get { d.object(forKey: "showFinals") as? Bool ?? true }
         set { d.set(newValue, forKey: "showFinals") }
@@ -74,11 +70,6 @@ enum Prefs {
         for id in [favoriteTeamID].compactMap({ $0 }) + extraTeamIDs where !out.contains(id) { out.append(id) }
         return out
     }
-    /// Only show games with a team from this conference (an ESPN group id); nil is all of Division I.
-    static var conferenceID: Int? {
-        get { d.object(forKey: "conferenceID") as? Int }
-        set { d.set(newValue, forKey: "conferenceID") }
-    }
     static var favoriteTeamName: String? {
         get { d.string(forKey: "favoriteTeamName") }
         set { d.set(newValue, forKey: "favoriteTeamName") }
@@ -121,11 +112,6 @@ enum Prefs {
     static var showMarquee: Bool {
         get { d.object(forKey: "showMarquee") as? Bool ?? true }
         set { d.set(newValue, forKey: "showMarquee") }
-    }
-    /// Notify when a new AP poll comes out.
-    static var pollAlerts: Bool {
-        get { d.bool(forKey: "pollAlerts") }
-        set { d.set(newValue, forKey: "pollAlerts") }
     }
     /// Ticker text size: an index into `textSizes`.
     static let textSizes: [(name: String, points: CGFloat)] = [("Small", 18), ("Medium", 22), ("Large", 26), ("Extra large", 32)]
@@ -211,7 +197,7 @@ enum LoginItem {
 
 // MARK: - Settings window
 
-enum SettingChange { case favorite, followed, conference, favoriteOnly, position, display, visibility, look }
+enum SettingChange { case favorite, followed, favoriteOnly, position, display, visibility, look }
 
 @MainActor
 final class SettingsController: NSObject {
@@ -222,12 +208,9 @@ final class SettingsController: NSObject {
     private let positionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let speedPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let extraPopup = NSPopUpButton(frame: .zero, pullsDown: true)
-    private let conferencePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let top25Popup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let spoilerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let oddsBox = NSButton(checkboxWithTitle: "Show betting odds (spread and over/under)", target: nil, action: nil)
-    private let marqueeBox = NSButton(checkboxWithTitle: "Marquee matchup tags (two top-10 teams)", target: nil, action: nil)
-    private let pollBox = NSButton(checkboxWithTitle: "Notify me when the AP poll comes out", target: nil, action: nil)
+    private let marqueeBox = NSButton(checkboxWithTitle: "Top-matchup tags (both teams .700 or better)", target: nil, action: nil)
     private let sizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let opacitySlider = NSSlider(value: 1, minValue: 0.4, maxValue: 1, target: nil, action: nil)
     private let opacityLabel = NSTextField(labelWithString: "100%")
@@ -240,7 +223,6 @@ final class SettingsController: NSObject {
     private let displayPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let hoverBox = NSButton(checkboxWithTitle: "Pause while the pointer is over it", target: nil, action: nil)
     private let flashPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let rankedBox = NSButton(checkboxWithTitle: "Top 25 games only", target: nil, action: nil)
     private let finalsBox = NSButton(checkboxWithTitle: "Final scores", target: nil, action: nil)
     private let upcomingBox = NSButton(checkboxWithTitle: "Upcoming games", target: nil, action: nil)
     private let recordsBox = NSButton(checkboxWithTitle: "Team records", target: nil, action: nil)
@@ -268,9 +250,6 @@ final class SettingsController: NSObject {
         teamPopup.isEnabled = false
         extraPopup.addItem(withTitle: "Loading teams…")
         extraPopup.isEnabled = false
-        conferencePopup.addItem(withTitle: "All Division I")
-        top25Popup.addItem(withTitle: "Loading…")
-        top25Popup.isEnabled = false
         spoilerPopup.addItems(withTitles: ["Off", "My teams' games only", "All games"])
         sizePopup.addItems(withTitles: Prefs.textSizes.map { $0.name })
         opacitySlider.isContinuous = true
@@ -279,7 +258,7 @@ final class SettingsController: NSObject {
         reminderPopup.addItems(withTitles: ["Off", "15 minutes before tip-off", "30 minutes before tip-off", "1 hour before tip-off"])
         channelPopup.addItem(withTitle: "All channels")
         channelPopup.isEnabled = false
-        for c: NSControl in [teamPopup, conferencePopup, spoilerPopup, marqueeBox, oddsBox, pollBox, sizePopup, opacitySlider, clickPopup, reminderPopup, scoresBox, menuScoreBox, autoHideBox, favoriteOnlyBox, colorsBox, notifyBox, positionPopup, displayPopup, speedPopup, hoverBox, flashPopup, rankedBox, finalsBox, upcomingBox, recordsBox, logosBox, tagsBox, loginBox, updatesBox] {
+        for c: NSControl in [teamPopup, spoilerPopup, marqueeBox, oddsBox, sizePopup, opacitySlider, clickPopup, reminderPopup, scoresBox, menuScoreBox, autoHideBox, favoriteOnlyBox, colorsBox, notifyBox, positionPopup, displayPopup, speedPopup, hoverBox, flashPopup, finalsBox, upcomingBox, recordsBox, logosBox, tagsBox, loginBox, updatesBox] {
             c.target = self
             c.action = #selector(changed(_:))
         }
@@ -393,10 +372,8 @@ final class SettingsController: NSObject {
         NSLayoutConstraint.activate([
             teamPopup.widthAnchor.constraint(equalToConstant: 280),
             extraPopup.widthAnchor.constraint(equalToConstant: 280),
-            conferencePopup.widthAnchor.constraint(equalToConstant: 280),
             reminderPopup.widthAnchor.constraint(equalToConstant: 280),
             channelPopup.widthAnchor.constraint(equalToConstant: 280),
-            top25Popup.widthAnchor.constraint(equalToConstant: 280),
             hint.widthAnchor.constraint(equalToConstant: 280),
             onlyHint.widthAnchor.constraint(equalToConstant: 280),
             notifyHint.widthAnchor.constraint(equalToConstant: 280),
@@ -423,21 +400,6 @@ final class SettingsController: NSObject {
     }
 
     private var teamNames: [String: String] = [:]
-
-    /// The current AP poll, as a list to look through (nothing in it is clickable).
-    func setTop25(_ teams: [RankedTeam]) {
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Current poll", action: nil, keyEquivalent: ""))   // the pull-down's title
-        for t in teams {
-            let rec = t.record.isEmpty ? "" : "  (\(t.record))"
-            let it = NSMenuItem(title: String(format: "%2d  %@%@", t.rank, t.name, rec), action: nil, keyEquivalent: "")
-            it.isEnabled = false
-            menu.addItem(it)
-        }
-        top25Popup.menu = menu
-        top25Popup.autoenablesItems = false
-        top25Popup.isEnabled = true
-    }
 
     /// The channels seen in today's data, for the "Only games on" menu.
     func setChannels(_ names: [String]) {
@@ -477,19 +439,6 @@ final class SettingsController: NSObject {
         Prefs.channelFilter = []
         syncChannels()
         onChange?(.display)
-    }
-
-    func setConferences(_ list: [Conference]) {
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "All Division I", action: nil, keyEquivalent: ""))
-        menu.addItem(.separator())
-        for c in list {
-            let it = NSMenuItem(title: c.name, action: nil, keyEquivalent: "")
-            it.representedObject = c.id
-            menu.addItem(it)
-        }
-        conferencePopup.menu = menu
-        sync()
     }
 
     /// Check marks on the followed teams, and a title that says how many there are.
@@ -549,7 +498,6 @@ final class SettingsController: NSObject {
         spoilerPopup.selectItem(at: Prefs.spoilerMode)
         marqueeBox.state = Prefs.showMarquee ? .on : .off
         oddsBox.state = Prefs.showOdds ? .on : .off
-        pollBox.state = Prefs.pollAlerts ? .on : .off
         sizePopup.selectItem(at: Prefs.textSize)
         opacitySlider.doubleValue = Prefs.barOpacity
         opacityLabel.stringValue = "\(Int((Prefs.barOpacity * 100).rounded()))%"
@@ -559,14 +507,9 @@ final class SettingsController: NSObject {
         menuScoreBox.state = Prefs.menuBarScore ? .on : .off
         autoHideBox.state = Prefs.autoHide ? .on : .off
         autoHideBox.isEnabled = !Prefs.followedIDs.isEmpty
-        let confIdx = conferencePopup.itemArray.firstIndex {
-            ($0.representedObject as? Int) == Prefs.conferenceID && Prefs.conferenceID != nil
-        } ?? 0
-        conferencePopup.selectItem(at: confIdx)
         syncDisplays()
         hoverBox.state = Prefs.pauseOnHover ? .on : .off
         speedPopup.selectItem(at: Prefs.speeds.firstIndex { $0.1 == Prefs.speed } ?? 1)
-        rankedBox.state = Prefs.rankedOnly ? .on : .off
         finalsBox.state = Prefs.showFinals ? .on : .off
         upcomingBox.state = Prefs.showUpcoming ? .on : .off
         recordsBox.state = Prefs.showRecords ? .on : .off
@@ -646,12 +589,6 @@ final class SettingsController: NSObject {
         case marqueeBox:
             Prefs.showMarquee = marqueeBox.state == .on
             onChange?(.display)
-        case pollBox:
-            guard pollBox.state == .on else { Prefs.pollAlerts = false; return }
-            TeamAlerts.requestPermission { [weak self] ok in
-                Prefs.pollAlerts = ok
-                self?.pollBox.state = ok ? .on : .off
-            }
         case sizePopup:
             Prefs.textSize = max(0, sizePopup.indexOfSelectedItem)
             onChange?(.look)
@@ -678,17 +615,11 @@ final class SettingsController: NSObject {
         case autoHideBox:
             Prefs.autoHide = autoHideBox.state == .on
             onChange?(.visibility)
-        case conferencePopup:
-            Prefs.conferenceID = conferencePopup.selectedItem?.representedObject as? Int
-            onChange?(.conference)
         case displayPopup:
             Prefs.displayID = displayPopup.selectedItem?.representedObject as? Int
             onChange?(.position)
         case speedPopup:
             Prefs.speed = Prefs.speeds[max(0, speedPopup.indexOfSelectedItem)].1
-            onChange?(.display)
-        case rankedBox:
-            Prefs.rankedOnly = rankedBox.state == .on
             onChange?(.display)
         case finalsBox:
             Prefs.showFinals = finalsBox.state == .on
