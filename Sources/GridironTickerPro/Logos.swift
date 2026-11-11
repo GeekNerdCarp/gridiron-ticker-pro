@@ -74,7 +74,7 @@ final class LogoStore {
     private nonisolated static func download(_ teamID: String) async -> (Data?, notFound: Bool) {
         var notFound = true
         for variant in ["500-dark", "500"] {
-            guard let url = URL(string: "https://a.espncdn.com/combiner/i?img=/i/teamlogos/ncaa/\(variant)/\(teamID).png&w=64&h=64"),
+            guard let url = URL(string: "https://a.espncdn.com/combiner/i?img=/i/teamlogos/nfl/\(variant)/\(teamID).png&w=64&h=64"),
                   let (data, resp) = try? await URLSession.shared.data(from: url) else { notFound = false; continue }
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             if code == 200, !data.isEmpty { return (data, false) }

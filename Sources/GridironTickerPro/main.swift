@@ -89,6 +89,14 @@ func buildTickerSegments(_ games: [Game], followed: Set<String>, font: NSFont, s
         if showScore, let sc = s.score { add(" \(sc)", live ? Palette.liveScore : Palette.score) }
     }
 
+    /// "HOU -10 · O/U 44.5", or nil when ESPN has no line for the game.
+    func oddsText(_ g: Game) -> String? {
+        var bits: [String] = []
+        if let d = g.odds, !d.isEmpty { bits.append(d) }
+        if let ou = g.overUnder { bits.append("O/U " + (ou == ou.rounded() ? String(Int(ou)) : String(ou))) }
+        return bits.isEmpty ? nil : bits.joined(separator: " · ")
+    }
+
     if games.isEmpty {
         add("NO GAMES TO SHOW RIGHT NOW", Palette.dim)
         add("          ", Palette.dim)
@@ -133,6 +141,7 @@ func buildTickerSegments(_ games: [Game], followed: Set<String>, font: NSFont, s
             if let r = g.round { add(" · \(r)", Palette.rank) }
             if let n = g.network { add(" · \(n.uppercased())", Palette.network) }
         }
+        if Prefs.showOdds, g.state != .final, let line = oddsText(g) { add(" · \(line)", Palette.network) }
         if separator { add("      ◆      ", Palette.dim) }
         parts.append(out)
         out = NSMutableAttributedString()
@@ -529,11 +538,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var forceHidden = false         // auto-hide is on, but you chose Hide Ticker during a game
     private var knownChannels = Set<String>()
     private var shownGames: [Game] = []     // what each ticker segment is, for clicks
+    private var teamNameByID: [String: String] = [:]
     private var teamColors: [String: (String?, String?)] = [:]   // team id -> (primary, alternate) hex
     private var lastLive: [String: Game] = [:]   // previous snapshot of each live game, to spot baskets
     private var lastFullRefresh = Date.distantPast
 
-    private let lookaheadDays = 6
+    private let lookaheadDays = 1
     private var barHeight: CGFloat { Prefs.fontPoints + 22 }   // 44 at the default 22 pt text
     private var font: NSFont { .monospacedSystemFont(ofSize: Prefs.fontPoints, weight: .heavy) }
 
@@ -782,7 +792,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for attempt in 0..<5 {
             if let t = try? await ESPN.fetchTeams(), !t.isEmpty {
                 settings.setTeams(t)
-                for team in t { teamColors[team.id] = (team.color, team.altColor) }
+                for team in t { teamColors[team.id] = (team.color, team.altColor); teamNameByID[team.id] = team.name }
                 render()
                 return
             }
@@ -886,16 +896,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         if Prefs.favoriteOnly, Prefs.favoriteTeamID != nil {
             shownGames = []
-            if let g = favoriteGame() {
+            let favOnBye = Prefs.favoriteTeamID.map { id in ESPN.byeTeamIDs.contains(id) && !games.contains { $0.involves(id) } } ?? false
+            if !favOnBye, let g = favoriteGame() {
                 shownGames = [g]
                 ticker.setCentered(buildTickerSegments([g], followed: Set(Prefs.followedIDs), font: font, separator: false)[0], key: g.id)
             } else {
                 let name = (Prefs.favoriteTeamName ?? "your team").uppercased()
-                let msg = lookahead.isEmpty ? "LOADING \(name)…" : "NO UPCOMING GAME FOR \(name)"
+                let onBye = Prefs.favoriteTeamID.map { ESPN.byeTeamIDs.contains($0) } ?? false
+                let msg = onBye ? "\(name) · BYE WEEK" : (lookahead.isEmpty ? "LOADING \(name)…" : "NO UPCOMING GAME FOR \(name)")
                 ticker.setCentered(NSAttributedString(string: msg, attributes: [.font: font, .foregroundColor: Palette.dim]))
             }
         } else {
-            ticker.set(buildTickerSegments(list, followed: Set(Prefs.followedIDs), font: font), keys: list.map { $0.id })
+            // A followed team on a bye gets its own "BYE WEEK" entry at the front.
+            let byes = Prefs.followedIDs.filter { id in ESPN.byeTeamIDs.contains(id) && !games.contains { $0.involves(id) } }
+            var segments = buildTickerSegments(list, followed: Set(Prefs.followedIDs), font: font)
+            var keys = list.map { $0.id }
+            for id in byes.reversed() {
+                let name = (teamNameByID[id] ?? "TEAM").uppercased()
+                let t = NSMutableAttributedString()
+                t.append(NSAttributedString(string: "★ \(name)", attributes: [.font: font, .foregroundColor: Palette.favorite]))
+                t.append(NSAttributedString(string: "  BYE WEEK      ◆      ", attributes: [.font: font, .foregroundColor: Palette.dim]))
+                segments.insert(t, at: 0)
+                keys.insert("bye-\(id)", at: 0)
+            }
+            ticker.set(segments, keys: keys)
         }
         if ProcessInfo.processInfo.environment["GRIDIRON_DEBUG"] != nil {
             print("--- render: \(list.count) games, lookahead days loaded: \(lookahead.filter { !$0.isEmpty }.count)")

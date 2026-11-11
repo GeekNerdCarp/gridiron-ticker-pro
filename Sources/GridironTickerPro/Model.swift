@@ -76,8 +76,34 @@ struct BroadcastJSON: Decodable {
     }
 }
 
+/// Competition odds: {"details":"HOU -10","overUnder":44.5,"spread":-10.0,...}. Absent for many games.
+struct OddsJSON: Decodable {
+    let details: String?
+    let overUnder: Double?
+}
+
 struct Board: Decodable {
     let events: [Lossy<Ev>]
+    let week: WeekInfo?
+    let leagues: [League]?
+
+    struct WeekInfo: Decodable {
+        let number: Int?
+        let teamsOnBye: [Lossy<ByeTeam>]?
+    }
+    struct ByeTeam: Decodable { let id: String }
+    struct League: Decodable { let calendar: [Lossy<CalType>]? }
+    /// One season phase: "1" preseason, "2" regular season, "3" postseason, each with its weeks.
+    struct CalType: Decodable {
+        let value: String
+        let entries: [Lossy<CalEntry>]?
+    }
+    struct CalEntry: Decodable {
+        let label: String?
+        let value: String
+        let startDate: String
+        let endDate: String
+    }
 }
 
 struct Ev: Decodable {
@@ -90,6 +116,7 @@ struct Ev: Decodable {
         let competitors: [CompetitorJSON]
         let broadcasts: [Lossy<BroadcastJSON>]?
         let notes: [Lossy<Note>]?
+        let odds: [Lossy<OddsJSON>]?
         struct Note: Decodable { let headline: String? }
     }
 }
@@ -157,7 +184,9 @@ struct Game {
     let detail: String
     let start: Date
     let network: String?   // e.g. "ESPN2", nil if ESPN doesn't list one
-    var round: String? = nil   // NCAA Tournament round, e.g. "SWEET 16"
+    var round: String? = nil   // postseason round, e.g. "WILD CARD" (set in a later phase)
+    var odds: String? = nil        // ESPN's line, e.g. "HOU -10"
+    var overUnder: Double? = nil
     var period = 0
     var clock: Double = 0
     var isHalftime = false
@@ -192,10 +221,10 @@ struct Game {
         }
         return false
     }
-    /// Live, second half or overtime, 4:00 or less left, within 5 points.
+    /// Live, fourth quarter or overtime, 4:00 or less left, within one score (8 points).
     var isCloseLate: Bool {
-        guard state == .live, period >= 2, clock <= 240, !isHalftime, let m = margin else { return false }
-        return m <= 5
+        guard state == .live, period >= 4, clock <= 240, let m = margin else { return false }
+        return m <= 8   // one possession
     }
     /// Live in the second half or overtime, with an unranked team leading a ranked one.
     var isUpsetBrewing: Bool {
@@ -237,7 +266,7 @@ struct TeamInfo {
 // MARK: - Networking
 
 enum ESPN {
-    static let base = "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball"
+    static let base = "https://site.api.espn.com/apis/site/v2/sports/football/nfl"
 
     private static let startParser: DateFormatter = {
         let f = DateFormatter()
@@ -268,52 +297,75 @@ enum ESPN {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
-    /// One day's scoreboard. -1 = yesterday, 0 = today, 1 = tomorrow, …
-    /// Always asks for a specific date: ESPN's undated scoreboard keeps showing
-    /// yesterday's games until well into the morning.
-    /// `group` 50 is all of Division I; a conference's id narrows it to games with one of its teams.
-    static func fetchBoard(daysFromNow: Int, group: Int = 50) async throws -> [Game] {
-        try await fetchBoard(on: Calendar.current.date(byAdding: .day, value: daysFromNow, to: Date())!, group: group)
+    /// One NFL week of the schedule: season type 1 preseason, 2 regular season, 3 postseason.
+    struct Week: Equatable {
+        let type: Int
+        let number: Int
+        let start: Date
+        let end: Date
     }
 
-    /// The scoreboard for the (Eastern time) date that contains `day`.
-    static func fetchBoard(on day: Date, group: Int = 50) async throws -> [Game] {
-        let url = "\(base)/scoreboard?groups=\(group)&limit=400&dates=\(dateParam.string(from: day))"
-        let board = try await get(Board.self, url)
+    /// NFL weeks run Thursday to Wednesday, so a whole week (including Monday night) is one scoreboard.
+    /// ESPN's calendar lists every week with its dates; we pick by date and always pass an explicit week.
+    private static let weekLock = NSLock()
+    nonisolated(unsafe) private static var weekCache: (fetched: Date, weeks: [Week])?
+    nonisolated(unsafe) private static var byes: [String] = []
+
+    /// Team ids on a bye in the most recently fetched week.
+    static var byeTeamIDs: [String] {
+        weekLock.withLock { byes }
+    }
+
+    static func calendar() async throws -> [Week] {
+        if let c = weekLock.withLock({ weekCache }), Date().timeIntervalSince(c.fetched) < 6 * 3600 { return c.weeks }
+        let board = try await get(Board.self, "\(base)/scoreboard")
+        var weeks: [Week] = []
+        for t in (board.leagues?.first?.calendar ?? []).compactMap({ $0.value }) {
+            guard let type = Int(t.value) else { continue }
+            for e in (t.entries ?? []).compactMap({ $0.value }) {
+                if let n = Int(e.value), let s = startParser.date(from: e.startDate), let en = startParser.date(from: e.endDate) {
+                    weeks.append(Week(type: type, number: n, start: s, end: en))
+                }
+            }
+        }
+        weeks.sort { $0.start < $1.start }
+        guard !weeks.isEmpty else { throw URLError(.cannotParseResponse) }
+        weekLock.withLock { weekCache = (Date(), weeks) }
+        return weeks
+    }
+
+    /// The week containing `day`; between seasons, the most recent one (or the first, before the preseason).
+    static func week(containing day: Date, in weeks: [Week]) -> Int {
+        weeks.lastIndex { $0.start <= day } ?? 0
+    }
+
+    static func fetchWeek(_ w: Week) async throws -> [Game] {
+        let board = try await get(Board.self, "\(base)/scoreboard?week=\(w.number)&seasontype=\(w.type)&limit=100")
+        if w.start <= Date() && Date() < w.end {
+            let ids = (board.week?.teamsOnBye ?? []).compactMap { $0.value?.id }
+            weekLock.withLock { byes = ids }
+        }
         return board.events.compactMap { $0.value }.compactMap(makeGame)
     }
 
-    /// What the ticker treats as "today": all of today's games, plus yesterday's games
-    /// that are still going or haven't tipped off (late games run past midnight), plus,
-    /// before noon, last night's final scores.
-    /// With a conference chosen, games for `alsoTeams` (the teams you follow) still come through
-    /// even when they play outside that conference.
-    static func fetchToday(group: Int = 50, alsoTeams: Set<String> = []) async throws -> [Game] {
-        async let todayBoard = fetchBoard(daysFromNow: 0, group: group)
-        async let yesterdayBoard = try? fetchBoard(daysFromNow: -1, group: group)
-        async let everyoneToday: [Game]? = (group != 50 && !alsoTeams.isEmpty) ? try? fetchBoard(daysFromNow: 0) : nil
-        var games = try await todayBoard
-        for g in await everyoneToday ?? [] where alsoTeams.contains(g.away.teamID) || alsoTeams.contains(g.home.teamID) {
-            games.append(g)
-        }
-        let morning = Calendar.current.component(.hour, from: Date()) < 12
-        for g in await yesterdayBoard ?? [] where g.state != .final || morning {
-            games.append(g)
-        }
-        var seen = Set<String>()
-        return games.filter { seen.insert($0.id).inserted }
+    /// The week that contains `day`.
+    static func fetchBoard(on day: Date, group: Int = 0) async throws -> [Game] {
+        let weeks = try await calendar()
+        return try await fetchWeek(weeks[week(containing: day, in: weeks)])
     }
 
-    /// Days 1...n, fetched in parallel. Index 0 = tomorrow. A failed day comes back empty.
-    static func fetchLookahead(days: Int, group: Int = 50) async -> [[Game]] {
-        await withTaskGroup(of: (Int, [Game]).self) { tasks in
-            for d in 1...days {
-                tasks.addTask { (d, (try? await fetchBoard(daysFromNow: d, group: group)) ?? []) }
-            }
-            var out = Array(repeating: [Game](), count: days)
-            for await (d, g) in tasks { out[d - 1] = g }
-            return out
-        }
+    /// What the ticker treats as "today": this NFL week's games, finished ones included.
+    /// (`group` and `alsoTeams` are kept for the callers; NFL has no conference filter.)
+    static func fetchToday(group: Int = 0, alsoTeams: Set<String> = []) async throws -> [Game] {
+        try await fetchBoard(on: Date())
+    }
+
+    /// Next week's games, as element 0 (`days` is ignored). A failed fetch comes back empty.
+    static func fetchLookahead(days: Int, group: Int = 0) async -> [[Game]] {
+        guard let weeks = try? await calendar() else { return [[]] }
+        let i = week(containing: Date(), in: weeks)
+        guard i + 1 < weeks.count else { return [[]] }
+        return [(try? await fetchWeek(weeks[i + 1])) ?? []]
     }
 
     /// A team's next game that hasn't started, from its full-season schedule.
@@ -326,41 +378,16 @@ enum ESPN {
     }
 
     static func fetchTeams() async throws -> [TeamInfo] {
-        let r = try await get(TeamsResponse.self, "\(base)/teams?groups=50&limit=500")
+        let r = try await get(TeamsResponse.self, "\(base)/teams?limit=100")
         return (r.sports.first?.leagues.first?.teams ?? [])
             .map { TeamInfo(id: $0.team.id, name: $0.team.displayName, color: $0.team.color, altColor: $0.team.alternateColor) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    static func fetchConferences() async throws -> [Conference] {
-        let r = try await get(ConferencesResponse.self, "\(base)/scoreboard/conferences")
-        return r.conferences.compactMap { c in
-            guard let id = Int(c.groupId), id != 50 else { return nil }
-            return Conference(id: id, name: c.name)
-        }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    static func fetchTop25() async throws -> [RankedTeam] { try await fetchPoll().teams }
-
-    static func fetchPoll() async throws -> AppPoll {
-        let r = try await get(RankingsResponse.self, "\(base)/rankings")
-        guard let ap = r.rankings.first(where: { $0.name.contains("AP") }) ?? r.rankings.first else {
-            return AppPoll(id: "", title: "", date: nil, teams: [], dropped: [])
-        }
-        let headline = ap.headline ?? ""
-        let week = headline.range(of: "Top 25 ").map { String(headline[$0.upperBound...]) } ?? ""
-        return AppPoll(
-            id: headline.isEmpty ? (ap.date ?? "") : headline,
-            title: week,
-            date: ap.date.flatMap { startParser.date(from: $0) },
-            teams: ap.ranks.map {
-                RankedTeam(rank: $0.current, name: $0.team.location, record: $0.recordSummary ?? "",
-                           id: $0.team.id ?? "", previous: $0.previous)
-            },
-            dropped: (ap.droppedOut ?? []).compactMap { $0.value }.compactMap { d in
-                d.team.id.map { ($0, d.team.location) }
-            })
-    }
+    /// NFL has no conference filter or poll in v1 (a division filter may come later).
+    static func fetchConferences() async throws -> [Conference] { [] }
+    static func fetchTop25() async throws -> [RankedTeam] { [] }
+    static func fetchPoll() async throws -> AppPoll { AppPoll(id: "", title: "", date: nil, teams: [], dropped: []) }
 
     /// "NCAA Men's Basketball Championship - East Region - Sweet 16" -> "SWEET 16".
     private static func roundLabel(_ headline: String) -> String? {
@@ -375,19 +402,15 @@ enum ESPN {
               let away = comp.competitors.first(where: { $0.homeAway == "away" }),
               let home = comp.competitors.first(where: { $0.homeAway == "home" }) else { return nil }
 
-        // In the NCAA Tournament ESPN puts the seed where an AP rank normally goes.
         let headline = comp.notes?.compactMap { $0.value?.headline }.first ?? ""
-        let isNCAA = headline.hasPrefix("NCAA Men's Basketball Championship")
         func side(_ c: CompetitorJSON) -> Side {
-            let r = c.curatedRank?.current
-            let valid = r != nil && r! <= (isNCAA ? 16 : 25)
-            return Side(teamID: c.team.id,
-                        name: c.team.shortDisplayName ?? c.team.displayName,
-                        rank: valid && !isNCAA ? r : nil,
-                        score: c.score,
-                        record: c.record,
-                        seed: valid && isNCAA ? r : nil,
-                        abbr: c.team.abbreviation)
+            Side(teamID: c.team.id,
+                 name: c.team.shortDisplayName ?? c.team.displayName,
+                 rank: nil,
+                 score: c.score,
+                 record: c.record,
+                 seed: nil,
+                 abbr: c.team.abbreviation)
         }
         let start = startParser.date(from: e.date) ?? Date()
         let state: GameState
@@ -409,7 +432,11 @@ enum ESPN {
         let network = (casts.first { $0.national } ?? casts.first)?.name
         var game = Game(id: e.id, state: state, away: side(away), home: side(home), detail: detail,
                         start: start, network: network)
-        if isNCAA { game.round = roundLabel(headline) }
+        if state != .final, let o = comp.odds?.compactMap({ $0.value }).first {
+            game.odds = o.details
+            game.overUnder = o.overUnder
+        }
+        _ = headline   // postseason round labels come in a later phase
         game.period = status.period ?? 0
         game.clock = status.clock ?? 0
         game.isHalftime = status.type.name == "STATUS_HALFTIME"

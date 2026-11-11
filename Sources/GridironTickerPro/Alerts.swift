@@ -107,7 +107,7 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
 
     private var reminded = Set<String>()
 
-    /// Before tip-off, for followed teams: "Kentucky tips off in 30 min". Once per game.
+    /// Before tip-off, for followed teams: "Kentucky kicks off in 30 min". Once per game.
     /// Returns the ids it reminded about (for testing).
     @discardableResult
     func remind(_ games: [Game], followed: Set<String>, now: Date = Date()) -> [String] {
@@ -123,7 +123,7 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
             func label(_ s: Side) -> String { (s.rank.map { "#\($0) " } ?? s.seed.map { "(\($0)) " } ?? "") + s.name }
             let content = UNMutableNotificationContent()
             let left = max(1, Int((until / 60).rounded()))
-            content.title = "🏈 \(mine.name) tips off in \(left) min"
+            content.title = "🏈 \(mine.name) kicks off in \(left) min"
             content.body = "\(label(g.away)) @ \(label(g.home))" + (g.network.map { " · \($0)" } ?? "")
             content.sound = .default
             UNUserNotificationCenter.current().add(

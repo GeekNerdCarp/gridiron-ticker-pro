@@ -107,6 +107,11 @@ enum Prefs {
         get { min(max(d.integer(forKey: "spoilerMode"), 0), 2) }
         set { d.set(newValue, forKey: "spoilerMode") }
     }
+    /// Show ESPN's betting line (spread and over/under) on games that have one. Off unless you turn it on.
+    static var showOdds: Bool {
+        get { d.object(forKey: "showOdds") as? Bool ?? false }
+        set { d.set(newValue, forKey: "showOdds") }
+    }
     /// A gold MARQUEE badge on big matchups (two top-10 teams).
     static var showMarquee: Bool {
         get { d.object(forKey: "showMarquee") as? Bool ?? true }
@@ -215,6 +220,7 @@ final class SettingsController: NSObject {
     private let conferencePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let top25Popup = NSPopUpButton(frame: .zero, pullsDown: true)
     private let spoilerPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let oddsBox = NSButton(checkboxWithTitle: "Show betting odds (spread and over/under)", target: nil, action: nil)
     private let marqueeBox = NSButton(checkboxWithTitle: "Marquee matchup tags (two top-10 teams)", target: nil, action: nil)
     private let pollBox = NSButton(checkboxWithTitle: "Notify me when the AP poll comes out", target: nil, action: nil)
     private let sizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -234,7 +240,7 @@ final class SettingsController: NSObject {
     private let upcomingBox = NSButton(checkboxWithTitle: "Upcoming games", target: nil, action: nil)
     private let recordsBox = NSButton(checkboxWithTitle: "Team records", target: nil, action: nil)
     private let logosBox = NSButton(checkboxWithTitle: "Team logos", target: nil, action: nil)
-    private let tagsBox = NSButton(checkboxWithTitle: "Upset and close-game tags", target: nil, action: nil)
+    private let tagsBox = NSButton(checkboxWithTitle: "Close-game tags", target: nil, action: nil)
     private let favoriteOnlyBox = NSButton(checkboxWithTitle: "Show only my team's game", target: nil, action: nil)
     private let colorsBox = NSButton(checkboxWithTitle: "Use my team's colors", target: nil, action: nil)
     private let notifyBox = NSButton(checkboxWithTitle: "Notify me about my team's games", target: nil, action: nil)
@@ -267,7 +273,7 @@ final class SettingsController: NSObject {
         reminderPopup.addItems(withTitles: ["Off", "15 minutes before tip-off", "30 minutes before tip-off", "1 hour before tip-off"])
         channelPopup.addItem(withTitle: "All channels")
         channelPopup.isEnabled = false
-        for c: NSControl in [teamPopup, conferencePopup, spoilerPopup, marqueeBox, pollBox, sizePopup, opacitySlider, clickPopup, reminderPopup, menuScoreBox, autoHideBox, favoriteOnlyBox, colorsBox, notifyBox, positionPopup, displayPopup, speedPopup, hoverBox, flashPopup, rankedBox, finalsBox, upcomingBox, recordsBox, logosBox, tagsBox, loginBox, updatesBox] {
+        for c: NSControl in [teamPopup, conferencePopup, spoilerPopup, marqueeBox, oddsBox, pollBox, sizePopup, opacitySlider, clickPopup, reminderPopup, menuScoreBox, autoHideBox, favoriteOnlyBox, colorsBox, notifyBox, positionPopup, displayPopup, speedPopup, hoverBox, flashPopup, rankedBox, finalsBox, upcomingBox, recordsBox, logosBox, tagsBox, loginBox, updatesBox] {
             c.target = self
             c.action = #selector(changed(_:))
         }
@@ -301,7 +307,7 @@ final class SettingsController: NSObject {
             "Big moments: lead changes, ties, and one-possession games in the last 4 minutes.")
         flashHint.font = .systemFont(ofSize: 11)
         flashHint.textColor = .secondaryLabelColor
-        let showStack = NSStackView(views: [rankedBox, finalsBox, upcomingBox, logosBox, recordsBox, tagsBox, marqueeBox, flashRow, flashHint])
+        let showStack = NSStackView(views: [finalsBox, upcomingBox, logosBox, recordsBox, tagsBox, oddsBox, flashRow, flashHint])
         showStack.orientation = .vertical
         showStack.alignment = .leading
         showStack.spacing = 6
@@ -357,10 +363,8 @@ final class SettingsController: NSObject {
             [empty, onlyStack],
             [empty, notifyStack],
             [label("Remind me:"), reminderPopup],
-            [empty, pollBox],
-            [label("Games from:"), conferencePopup],
             [label("Only games on:"), channelStack],
-        ], topAlignedRow: 8)
+        ], topAlignedRow: 6)
         let lookPage = page([
             [label("Position:"), positionPopup],
             [label("Display:"), displayPopup],
@@ -379,7 +383,6 @@ final class SettingsController: NSObject {
         let generalPage = page([
             [label("Startup:"), loginBox],
             [label("Updates:"), updatesBox],
-            [label("AP Top 25:"), top25Popup],
         ])
         NSLayoutConstraint.activate([
             teamPopup.widthAnchor.constraint(equalToConstant: 280),
@@ -538,6 +541,7 @@ final class SettingsController: NSObject {
         syncChannels()
         spoilerPopup.selectItem(at: Prefs.spoilerMode)
         marqueeBox.state = Prefs.showMarquee ? .on : .off
+        oddsBox.state = Prefs.showOdds ? .on : .off
         pollBox.state = Prefs.pollAlerts ? .on : .off
         sizePopup.selectItem(at: Prefs.textSize)
         opacitySlider.doubleValue = Prefs.barOpacity
@@ -628,6 +632,9 @@ final class SettingsController: NSObject {
             onChange?(.position)
         case spoilerPopup:
             Prefs.spoilerMode = max(0, spoilerPopup.indexOfSelectedItem)
+            onChange?(.display)
+        case oddsBox:
+            Prefs.showOdds = oddsBox.state == .on
             onChange?(.display)
         case marqueeBox:
             Prefs.showMarquee = marqueeBox.state == .on
