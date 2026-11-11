@@ -382,15 +382,18 @@ enum ESPN {
 
 struct SummaryResponse: Decodable {
     let boxscore: Box?
-    let plays: [Lossy<Play>]?
+    let drives: Drives?
     struct Box: Decodable { let teams: [TeamBox]?; let players: [PlayersBox]? }
     struct TeamRef: Decodable { let id: String }
     struct TeamBox: Decodable { let team: TeamRef; let statistics: [Stat]? }
-    struct Stat: Decodable { let label: String?; let displayValue: String? }
+    struct Stat: Decodable { let name: String?; let displayValue: String? }
     struct PlayersBox: Decodable { let team: TeamRef; let statistics: [Group]? }
-    struct Group: Decodable { let labels: [String]?; let athletes: [Athlete]? }
+    struct Group: Decodable { let name: String?; let labels: [String]?; let athletes: [Athlete]? }
     struct Athlete: Decodable { let athlete: Person; let stats: [String]? }
     struct Person: Decodable { let displayName: String? }
+    /// Play-by-play comes as drives: finished ones under `previous`, the one in progress under `current`.
+    struct Drives: Decodable { let previous: [Lossy<Drive>]?; let current: Drive? }
+    struct Drive: Decodable { let plays: [Lossy<Play>]? }
     struct Play: Decodable {
         let text: String?
         let period: Num?
@@ -411,34 +414,50 @@ struct BoxScore {
 }
 
 extension ESPN {
-    /// A game's team stats, top scorers and latest play. About 400 KB, so only fetched on a click.
+    /// A game's team stats, top passer/rusher/receiver and latest play. About 400 KB, so only fetched on a click.
     static func fetchBoxScore(gameID: String) async throws -> BoxScore {
         let r = try await get(SummaryResponse.self, "\(base)/summary?event=\(gameID)")
         var box = BoxScore()
-        let keep = [("FG", "FG"), ("3PT", "3PT"), ("FT", "FT"), ("Rebounds", "REB"), ("Assists", "AST"), ("Turnovers", "TO")]
+        let keep = [("totalYards", "TOTAL"), ("netPassingYards", "PASS"), ("rushingYards", "RUSH"),
+                    ("turnovers", "TO"), ("firstDowns", "1ST"), ("thirdDownEff", "3RD"), ("possessionTime", "TOP")]
         for t in r.boxscore?.teams ?? [] {
             var line = BoxScore.Line()
             for (key, label) in keep {
-                if let v = t.statistics?.first(where: { $0.label == key })?.displayValue { line.stats.append((label, v)) }
+                if let v = t.statistics?.first(where: { $0.name == key })?.displayValue { line.stats.append((label, v)) }
             }
             box.lines[t.team.id] = line
         }
+        // Leader lines: (group, label of the number to rank by, the labels to print).
+        let groups: [(String, String, [String])] = [("passing", "YDS", ["C/ATT", "YDS", "TD", "INT"]),
+                                                    ("rushing", "YDS", ["CAR", "YDS", "TD"]),
+                                                    ("receiving", "YDS", ["REC", "YDS", "TD"])]
+        let suffix = ["C/ATT": "", "CAR": " car", "REC": " rec", "YDS": " yds", "TD": " TD", "INT": " INT"]
         for pb in r.boxscore?.players ?? [] {
-            guard let g = pb.statistics?.first, let labels = g.labels else { continue }
-            let iP = labels.firstIndex(of: "PTS"), iR = labels.firstIndex(of: "REB"), iA = labels.firstIndex(of: "AST")
-            func val(_ a: SummaryResponse.Athlete, _ i: Int?) -> Int {
-                guard let i, let st = a.stats, st.indices.contains(i) else { return 0 }
-                return Int(st[i]) ?? 0
+            var leaders: [String] = []
+            for (name, rankBy, show) in groups {
+                guard let g = pb.statistics?.first(where: { $0.name == name }), let labels = g.labels,
+                      let iRank = labels.firstIndex(of: rankBy) else { continue }
+                func num(_ a: SummaryResponse.Athlete) -> Int {
+                    guard let st = a.stats, st.indices.contains(iRank) else { return 0 }
+                    return Int(st[iRank]) ?? 0
+                }
+                guard let top = (g.athletes ?? []).max(by: { num($0) < num($1) }), num(top) > 0 else { continue }
+                let bits = show.compactMap { l -> String? in
+                    guard let i = labels.firstIndex(of: l), let st = top.stats, st.indices.contains(i) else { return nil }
+                    // Skip zero touchdowns and interceptions to keep the line short.
+                    if (l == "TD" || l == "INT"), st[i] == "0" { return nil }
+                    return st[i] + (suffix[l] ?? "")
+                }
+                leaders.append("\(top.athlete.displayName ?? "?")  " + bits.joined(separator: ", "))
             }
-            let top = (g.athletes ?? []).sorted { val($0, iP) > val($1, iP) }.prefix(2).filter { val($0, iP) > 0 }
-            box.lines[pb.team.id, default: BoxScore.Line()].leaders = top.map {
-                "\($0.athlete.displayName ?? "?")  \(val($0, iP)) pts, \(val($0, iR)) reb, \(val($0, iA)) ast"
-            }
+            box.lines[pb.team.id, default: BoxScore.Line()].leaders = leaders
         }
-        if let p = r.plays?.compactMap({ $0.value }).last(where: { !($0.text ?? "").isEmpty }) {
+        let drives = (r.drives?.previous?.compactMap { $0.value } ?? []) + [r.drives?.current].compactMap { $0 }
+        let plays = drives.flatMap { ($0.plays ?? []).compactMap { $0.value } }
+        if let p = plays.last(where: { !($0.text ?? "").isEmpty && !($0.text ?? "").uppercased().hasPrefix("END ") }) {
             let n = p.period?.number ?? 0
-            let half = n == 1 ? "1st" : (n == 2 ? "2nd" : (n > 2 ? "OT" : ""))
-            box.lastPlay = [p.clock?.displayValue, half].compactMap { $0 }.joined(separator: " ") + " · " + (p.text ?? "")
+            let q = n >= 1 && n <= 4 ? ["1st", "2nd", "3rd", "4th"][n - 1] : (n > 4 ? "OT" : "")
+            box.lastPlay = [p.clock?.displayValue, q].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " ") + " · " + (p.text ?? "")
         }
         return box
     }

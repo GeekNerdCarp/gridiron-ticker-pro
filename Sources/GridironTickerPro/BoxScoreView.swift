@@ -128,7 +128,7 @@ final class BoxScorePopover: NSObject {
                     })
                 grid.columnSpacing = 14
                 grid.rowSpacing = 4
-                grid.column(at: 0).width = 40
+                grid.column(at: 0).width = 52
                 grid.column(at: 1).width = 70
                 grid.column(at: 2).width = 70
                 stack.addArrangedSubview(grid)

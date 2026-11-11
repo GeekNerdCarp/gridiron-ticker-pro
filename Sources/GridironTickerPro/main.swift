@@ -908,7 +908,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// ESPN's page for a game: live gamecast, box score, or preview.
     private func openESPN(_ g: Game) {
-        guard let url = URL(string: "https://www.espn.com/mens-college-basketball/game/_/gameId/\(g.id)") else { return }
+        guard let url = URL(string: "https://www.espn.com/nfl/game/_/gameId/\(g.id)") else { return }
         NSWorkspace.shared.open(url)
     }
 
