@@ -402,6 +402,21 @@ struct SummaryResponse: Decodable {
     let boxscore: Box?
     let drives: Drives?
     let injuries: [Lossy<InjuryTeam>]?
+    let scoringPlays: [Lossy<ScoringPlay>]?
+    let header: Header?
+    struct ScoringPlay: Decodable {
+        let text: String?
+        let type: TypeText?
+        let team: TeamRef?
+        let awayScore: Int?
+        let homeScore: Int?
+    }
+    struct TypeText: Decodable { let text: String? }
+    struct Header: Decodable {
+        let competitions: [Comp]?
+        struct Comp: Decodable { let competitors: [Competitor]? }
+        struct Competitor: Decodable { let homeAway: String?; let team: TeamRef; let score: String? }
+    }
     struct InjuryTeam: Decodable { let injuries: [Lossy<Injury>]? }
     struct Injury: Decodable { let status: String?; let athlete: Person? }
     struct Box: Decodable { let teams: [TeamBox]?; let players: [PlayersBox]? }
@@ -414,9 +429,10 @@ struct SummaryResponse: Decodable {
     struct Person: Decodable { let id: String?; let displayName: String? }
     /// Play-by-play comes as drives: finished ones under `previous`, the one in progress under `current`.
     struct Drives: Decodable { let previous: [Lossy<Drive>]?; let current: Drive? }
-    struct Drive: Decodable { let plays: [Lossy<Play>]? }
+    struct Drive: Decodable { let team: TeamRef?; let plays: [Lossy<Play>]? }
     struct Play: Decodable {
         let text: String?
+        let type: TypeText?
         let period: Num?
         let clock: Clk?
         struct Num: Decodable { let number: Int? }

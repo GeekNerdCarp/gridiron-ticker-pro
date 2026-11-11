@@ -9,7 +9,12 @@ struct FantasyPlayer: Codable, Equatable {
     let pos: String        // QB, RB, WR, TE
     let teamID: String
     let teamAbbr: String
-    var short: String {    // "Josh Allen" -> "J. Allen"
+    var isDST: Bool { pos == "DST" }
+    var short: String {    // "Josh Allen" -> "J. Allen"; "Baltimore Ravens D/ST" -> "Ravens D/ST"
+        if isDST {
+            let w = name.split(separator: " ")
+            return w.count >= 2 ? "\(w[w.count - 2]) D/ST" : name
+        }
         let parts = name.split(separator: " ")
         guard parts.count >= 2, let f = parts.first?.first else { return name }
         return "\(f). " + parts.dropFirst().joined(separator: " ")
@@ -23,14 +28,39 @@ struct FantasyStats: Equatable {
     var recYds = 0.0, recTD = 0, rec = 0
     var retTD = 0
     var fumLost = 0
+    // Kickers
+    var fgMade: [Int] = []        // distance of each field goal made
+    var fgMissed = 0
+    var xp = 0
+    // Team defense / special teams
+    var dst = false
+    var sacks = 0, defInt = 0, fumRec = 0, safeties = 0, blocked = 0, defTD = 0
+    var pointsAllowed = 0, yardsAllowed = 0
 
     var touchdowns: Int { passTD + rushTD + recTD + retTD }
     /// ESPN standard: 1 pt per 25 passing yds, 4 per passing TD, -2 per INT or lost fumble,
     /// 1 pt per 10 rushing or receiving yds, 6 per TD. (Two-point conversions aren't in the box score feed.)
     var points: Double {
-        let p = passYds * 0.04 + Double(passTD) * 4 - Double(ints) * 2
+        var p = passYds * 0.04 + Double(passTD) * 4 - Double(ints) * 2
             + (rushYds + recYds) * 0.1 + Double(rushTD + recTD + retTD) * 6 - Double(fumLost) * 2
+        for d in fgMade { p += d < 40 ? 3 : (d < 50 ? 4 : (d < 60 ? 5 : 6)) }
+        p += Double(xp) - Double(fgMissed)
+        if dst {
+            p += Double(sacks) + Double(defInt * 2) + Double(fumRec * 2) + Double(safeties * 2) + Double(blocked * 2) + Double(defTD * 6)
+            p += FantasyStats.allowedPoints(pointsAllowed) + FantasyStats.allowedYards(yardsAllowed)
+        }
         return (p * 100).rounded() / 100
+    }
+
+    // ESPN's published D/ST tables disagree across pages and years. These are the league-default tiers
+    // (points allowed, yards allowed); change them here if your league differs.
+    static func allowedPoints(_ pa: Int) -> Double {
+        switch pa { case 0: return 5; case 1...6: return 4; case 7...13: return 3; case 14...17: return 1
+        case 18...27: return 0; case 28...34: return -1; case 35...45: return -3; default: return -5 }
+    }
+    static func allowedYards(_ y: Int) -> Double {
+        switch y { case ..<100: return 5; case 100...199: return 3; case 200...299: return 2; case 300...349: return 0
+        case 350...399: return -1; case 400...449: return -3; case 450...499: return -5; default: return -7 }
     }
     /// "24/31, 250 yds, 2 TD, 1 INT" style summary of what the player actually did.
     var line: String {
@@ -44,6 +74,19 @@ struct FantasyStats: Equatable {
         if recTD > 0 { bits.append("\(recTD) rec TD") }
         if retTD > 0 { bits.append("\(retTD) ret TD") }
         if fumLost > 0 { bits.append("\(fumLost) fumble lost") }
+        if !fgMade.isEmpty { bits.append("\(fgMade.count) FG (" + fgMade.map(String.init).joined(separator: ", ") + ")") }
+        if fgMissed > 0 { bits.append("\(fgMissed) FG missed") }
+        if xp > 0 { bits.append("\(xp) XP") }
+        if dst {
+            if sacks > 0 { bits.append("\(sacks) sack" + (sacks == 1 ? "" : "s")) }
+            if defInt > 0 { bits.append("\(defInt) INT") }
+            if fumRec > 0 { bits.append("\(fumRec) fumble rec") }
+            if defTD > 0 { bits.append("\(defTD) TD") }
+            if safeties > 0 { bits.append("\(safeties) safety") }
+            if blocked > 0 { bits.append("\(blocked) blocked kick") }
+            bits.append("\(pointsAllowed) pts allowed")
+            bits.append("\(yardsAllowed) yds allowed")
+        }
         return bits.joined(separator: ", ")
     }
 }
@@ -89,7 +132,7 @@ enum FantasyPool {
     private struct RosterResponse: Decodable {
         let athletes: [Group]?
         let team: Team?
-        struct Team: Decodable { let id: String; let abbreviation: String? }
+        struct Team: Decodable { let id: String; let abbreviation: String?; let displayName: String? }
         struct Group: Decodable { let items: [Lossy<Ath>]? }
         struct Ath: Decodable {
             let id: String
@@ -99,15 +142,15 @@ enum FantasyPool {
         }
     }
 
-    private static let keep: Set<String> = ["QB", "RB", "WR", "TE"]
+    private static let keep: Set<String> = ["QB", "RB", "WR", "TE", "PK"]
     private static var cacheFile: URL {
         let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("app.gridirontickerpro.mac", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("fantasy-pool.json")
+        return dir.appendingPathComponent("fantasy-pool-v2.json")
     }
 
-    /// Every QB, RB, WR and TE on an NFL roster. Cached for a day, since 32 requests is a lot to repeat.
+    /// Every QB, RB, WR, TE and kicker on an NFL roster, plus each team\u2019s D/ST. Cached for a day, since 32 requests is a lot to repeat.
     static func load(teamIDs: [String]) async -> [FantasyPlayer] {
         if let attrs = try? FileManager.default.attributesOfItem(atPath: cacheFile.path),
            let date = attrs[.modificationDate] as? Date, Date().timeIntervalSince(date) < 24 * 3600,
@@ -118,10 +161,12 @@ enum FantasyPool {
                 tasks.addTask {
                     guard let r = try? await ESPN.get(RosterResponse.self, "\(ESPN.base)/teams/\(id)/roster") else { return [] }
                     let abbr = r.team?.abbreviation ?? ""
-                    return (r.athletes ?? []).flatMap { $0.items ?? [] }.compactMap { $0.value }.compactMap { a in
+                    let people = (r.athletes ?? []).flatMap { $0.items ?? [] }.compactMap { $0.value }.compactMap { a -> FantasyPlayer? in
                         guard let pos = a.position?.abbreviation, keep.contains(pos) else { return nil }
-                        return FantasyPlayer(id: a.id, name: a.displayName, pos: pos, teamID: id, teamAbbr: abbr)
+                        return FantasyPlayer(id: a.id, name: a.displayName, pos: pos == "PK" ? "K" : pos, teamID: id, teamAbbr: abbr)
                     }
+                    let dst = FantasyPlayer(id: "dst-\(id)", name: "\(r.team?.displayName ?? abbr) D/ST", pos: "DST", teamID: id, teamAbbr: abbr)
+                    return people + [dst]
                 }
             }
             var out: [FantasyPlayer] = []
@@ -164,6 +209,7 @@ extension ESPN {
                 }
             }
         }
+        addKickersAndDefenses(r, into: &stats)
         var injuries: [String: String] = [:]
         for t in r.injuries ?? [] {
             for i in t.value?.injuries ?? [] {
@@ -171,6 +217,81 @@ extension ESPN {
             }
         }
         return (stats, injuries)
+    }
+}
+
+extension ESPN {
+    /// Kicker and D/ST points. Field-goal distances, safeties, defensive scores and blocked kicks come from
+    /// the play-by-play text; sacks, interceptions, fumbles and yards come from the team stats.
+    fileprivate static func addKickersAndDefenses(_ r: SummaryResponse, into stats: inout [String: FantasyStats]) {
+        let comps = r.header?.competitions?.first?.competitors ?? []
+        guard comps.count == 2 else { return }
+        let ids = comps.map { $0.team.id }
+        func opp(_ id: String) -> String { ids.first { $0 != id } ?? "" }
+        var score: [String: Int] = [:]
+        for c in comps { score[c.team.id] = Int(c.score ?? "") ?? 0 }
+        let homeID = comps.first { $0.homeAway == "home" }?.team.id
+
+        // Field goals by kicking team, from the drives.
+        var fgMade: [String: [Int]] = [:], fgMissed: [String: Int] = [:], blocked: [String: Int] = [:]
+        let drives = (r.drives?.previous?.compactMap { $0.value } ?? []) + [r.drives?.current].compactMap { $0 }
+        for d in drives {
+            guard let team = d.team?.id else { continue }
+            for p in (d.plays ?? []).compactMap({ $0.value }) {
+                let type = (p.type?.text ?? "").lowercased(), text = p.text ?? ""
+                if type.contains("block") { blocked[opp(team), default: 0] += 1 }
+                guard type.contains("field goal") else { continue }
+                let dist = text.range(of: #"(\d+) yard"#, options: .regularExpression).flatMap { Int(text[$0].prefix { $0.isNumber }) } ?? 0
+                if type.contains("good") { fgMade[team, default: []].append(dist) } else { fgMissed[team, default: 0] += 1 }
+            }
+        }
+
+        // Defensive scores and safeties, and the points a pick-six or fumble return put on the board.
+        var defTD: [String: Int] = [:], safeties: [String: Int] = [:], defensivePoints: [String: Int] = [:]
+        var prev = (away: 0, home: 0)
+        for sp in (r.scoringPlays?.compactMap { $0.value } ?? []) {
+            let a = sp.awayScore ?? prev.away, h = sp.homeScore ?? prev.home
+            defer { prev = (a, h) }
+            guard let tid = sp.team?.id else { continue }
+            let type = (sp.type?.text ?? "").lowercased()
+            let delta = tid == homeID ? h - prev.home : a - prev.away
+            if type.contains("safety") { safeties[tid, default: 0] += 1; continue }
+            guard type.contains("touchdown"), !["rushing", "passing", "receiving"].contains(where: { type.contains($0) }) else { continue }
+            defTD[tid, default: 0] += 1
+            if type.contains("interception") || type.contains("fumble") { defensivePoints[tid, default: 0] += delta }
+        }
+
+        func teamStat(_ team: String, _ name: String) -> String {
+            r.boxscore?.teams?.first { $0.team.id == team }?.statistics?.first { $0.name == name }?.displayValue ?? ""
+        }
+        for id in ids {
+            let o = opp(id)
+            var s = FantasyStats()
+            s.dst = true
+            s.sacks = Int(teamStat(o, "sacksYardsLost").split(separator: "-").first ?? "") ?? 0
+            s.defInt = Int(teamStat(o, "interceptions")) ?? 0
+            s.fumRec = Int(teamStat(o, "fumblesLost")) ?? 0
+            s.defTD = defTD[id] ?? 0
+            s.safeties = safeties[id] ?? 0
+            s.blocked = blocked[id] ?? 0
+            s.yardsAllowed = Int(teamStat(o, "totalYards")) ?? 0
+            // Points allowed: the other team's score, minus what its own defense scored.
+            s.pointsAllowed = max(0, (score[o] ?? 0) - (defensivePoints[o] ?? 0))
+            stats["dst-\(id)"] = s
+        }
+
+        // Kickers: field goals come from the team's plays; extra points from each kicker's own line.
+        for pb in r.boxscore?.players ?? [] {
+            guard let g = pb.statistics?.first(where: { $0.name == "kicking" }), let labels = g.labels,
+                  let iXP = labels.firstIndex(of: "XP") else { continue }
+            for (n, a) in (g.athletes ?? []).enumerated() {
+                guard let id = a.athlete.id else { continue }
+                var s = stats[id] ?? FantasyStats()
+                if let st = a.stats, st.indices.contains(iXP) { s.xp = Int(st[iXP].split(separator: "/").first ?? "") ?? 0 }
+                if n == 0 { s.fgMade = fgMade[pb.team.id] ?? []; s.fgMissed = fgMissed[pb.team.id] ?? 0 }
+                stats[id] = s
+            }
+        }
     }
 }
 

@@ -87,7 +87,7 @@ final class FantasyWindowController: NSObject, NSSearchFieldDelegate {
     }
 
     private func build() {
-        search.placeholderString = "Search players (QB, RB, WR, TE)"
+        search.placeholderString = "Search players, kickers or D/ST (try “ravens dst”)"
         search.delegate = self
         results.onDouble = { [weak self] in self?.addMine() }
         results.points = nil
@@ -112,7 +112,7 @@ final class FantasyWindowController: NSObject, NSSearchFieldDelegate {
         cols.spacing = 16
         cols.alignment = .top
 
-        let scoring = small("Scoring is ESPN standard: 1 point per 25 passing yards, 4 per passing TD, −2 per interception or lost fumble, 1 per 10 rushing or receiving yards, 6 per TD. Kickers, defenses and two-point conversions aren't counted.")
+        let scoring = small("Scoring is ESPN standard: 1 point per 25 passing yards, 4 per passing TD, −2 per interception or lost fumble, 1 per 10 rushing or receiving yards, 6 per TD. Kickers: 3, 4, 5 or 6 points per field goal (under 40, 40–49, 50–59, 60+ yards), 1 per extra point, −1 per miss. D/ST: sacks 1, turnovers and safeties and blocked kicks 2, touchdowns 6, plus points-allowed and yards-allowed tiers (approximate). Two-point conversions aren't counted.")
         history.font = .systemFont(ofSize: 11)
         history.textColor = .secondaryLabelColor
 
