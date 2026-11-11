@@ -243,8 +243,73 @@ enum ESPN {
         return f
     }()
 
+    /// Why a request didn't go out or didn't succeed.
+    enum RequestError: LocalizedError {
+        case slowDown(seconds: Int)      // ESPN pushed back; we're waiting before asking again
+        case badStatus(Int)
+        var errorDescription: String? {
+            switch self {
+            case .slowDown(let s): return "ESPN asked us to slow down; trying again in \(s) s"
+            case .badStatus(let c): return "ESPN answered with status \(c)"
+            }
+        }
+    }
+
+    /// Keeps us a polite client: at most a few requests at once, and when ESPN answers 429 or a 5xx error
+    /// we stop asking for a while (its Retry-After if it gives one, else 5 s doubling up to 5 minutes).
+    /// During that pause requests fail at once instead of piling on, and the ticker keeps the last good data.
+    private actor RequestGate {
+        private let limit = 4
+        private var inFlight = 0
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var cooldownUntil = Date.distantPast
+        private var failures = 0
+
+        func acquire() async throws {
+            let wait = cooldownUntil.timeIntervalSinceNow
+            if wait > 0 { throw RequestError.slowDown(seconds: Int(wait.rounded(.up))) }
+            if inFlight < limit { inFlight += 1; return }
+            await withCheckedContinuation { waiters.append($0) }   // a finishing request hands us its slot
+        }
+        func release() {
+            if waiters.isEmpty { inFlight -= 1 } else { waiters.removeFirst().resume() }
+        }
+        func succeeded() { failures = 0 }
+        func pushedBack(retryAfter: TimeInterval?) {
+            failures += 1
+            let delay = min(300, max(retryAfter ?? 0, 5 * pow(2, Double(min(failures, 7) - 1))))
+            cooldownUntil = max(cooldownUntil, Date().addingTimeInterval(delay))
+        }
+        var remaining: Int { max(0, Int(cooldownUntil.timeIntervalSinceNow.rounded(.up))) }
+    }
+    private static let gate = RequestGate()
+
+    /// Seconds left in a "slow down" pause, for the menu.
+    static func cooldownRemaining() async -> Int { await gate.remaining }
+
     static func get<T: Decodable>(_ type: T.Type, _ url: String) async throws -> T {
-        let (data, _) = try await URLSession.shared.data(from: URL(string: url)!)
+        try await gate.acquire()
+        let data: Data
+        do {
+            var req = URLRequest(url: URL(string: url)!)
+            req.timeoutInterval = 20
+            let (d, resp) = try await URLSession.shared.data(for: req)
+            if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                if http.statusCode == 429 || http.statusCode >= 500 {
+                    await gate.pushedBack(retryAfter: http.value(forHTTPHeaderField: "Retry-After").flatMap { TimeInterval($0) })
+                }
+                await gate.release()
+                throw RequestError.badStatus(http.statusCode)
+            }
+            data = d
+        } catch let e as RequestError {
+            throw e
+        } catch {
+            await gate.release()
+            throw error
+        }
+        await gate.succeeded()
+        await gate.release()
         return try JSONDecoder().decode(T.self, from: data)
     }
 

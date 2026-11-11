@@ -532,6 +532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var scheduleNext: [String: Game] = [:]   // each followed team's next game, from its season schedule
     private var lastUpdate: Date?
     private var lastError: String?
+    private var slowDownUntil = Date.distantPast   // when ESPN asked us to back off, until when
     private var refreshTask: Task<Void, Never>?
     private var forceShown = false          // auto-hide is on, but you chose Show Ticker
     private var forceHidden = false         // auto-hide is on, but you chose Hide Ticker during a game
@@ -710,6 +711,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 }
             }
             guard !Task.isCancelled else { return }
+            slowDownUntil = Date().addingTimeInterval(TimeInterval(await ESPN.cooldownRemaining()))
             for fav in Prefs.followedIDs {
                 for g in games where g.involves(fav) { alerts.observe(g, favoriteID: fav) }
             }
@@ -982,6 +984,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var status = "Today: \(live) live · \(up) upcoming · \(fin) final"
         if let e = lastError, lastUpdate == nil { status = "Can't reach ESPN (\(e))" }
         menu.addItem(withTitle: status, action: nil, keyEquivalent: "").isEnabled = false
+        let slow = Int(slowDownUntil.timeIntervalSinceNow.rounded(.up))
+        if slow > 0 {
+            menu.addItem(withTitle: "ESPN asked us to slow down; retrying in \(slow) s", action: nil, keyEquivalent: "").isEnabled = false
+        }
         if let t = lastUpdate {
             let f = DateFormatter(); f.timeStyle = .medium
             menu.addItem(withTitle: "Updated \(f.string(from: t))", action: nil, keyEquivalent: "").isEnabled = false
