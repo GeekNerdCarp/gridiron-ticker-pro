@@ -901,6 +901,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if FantasyPrefs.display == 1 {
                 segments = fan.segments + segments
                 keys = fan.keys + keys
+            } else if FantasyPrefs.display == 3 {
+                segments += fan.segments
+                keys += fan.keys
             }
             ticker.set(segments, keys: keys)
         }

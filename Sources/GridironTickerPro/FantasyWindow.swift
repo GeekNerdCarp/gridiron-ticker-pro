@@ -94,7 +94,12 @@ final class FantasyWindowController: NSObject, NSSearchFieldDelegate {
         mine.points = { p in FantasyStore.shared.stats[p.id].map { "\(fantasyFormat($0.points)) pts" } }
         theirs.points = mine.points
 
-        displayPopup.addItems(withTitles: ["Off", "Mixed in at the front of the ticker", "Only my fantasy team"])
+        // Tags are the saved values: 0 off, 1 front of the ticker, 3 end of the ticker, 2 only my fantasy team.
+        for (title, tag) in [("Off", 0), ("All my players at the front of the ticker", 1),
+                             ("All my players at the end of the ticker", 3), ("Only my fantasy team", 2)] {
+            displayPopup.addItem(withTitle: title)
+            displayPopup.lastItem?.tag = tag
+        }
         displayPopup.target = self; displayPopup.action = #selector(changed)
         menuBox.target = self; menuBox.action = #selector(changed)
         alertBox.target = self; alertBox.action = #selector(alertsToggled)
@@ -161,7 +166,7 @@ final class FantasyWindowController: NSObject, NSSearchFieldDelegate {
     }
 
     private func sync() {
-        displayPopup.selectItem(at: FantasyPrefs.display)
+        displayPopup.selectItem(withTag: FantasyPrefs.display)
         menuBox.state = FantasyPrefs.menuBar ? .on : .off
         alertBox.state = FantasyPrefs.alerts ? .on : .off
         thresholdPopup.selectItem(at: thresholds.firstIndex(of: FantasyPrefs.threshold) ?? 0)
@@ -216,7 +221,7 @@ final class FantasyWindowController: NSObject, NSSearchFieldDelegate {
     }
 
     @objc private func changed() {
-        FantasyPrefs.display = max(0, displayPopup.indexOfSelectedItem)
+        FantasyPrefs.display = displayPopup.selectedItem?.tag ?? 0
         FantasyPrefs.menuBar = menuBox.state == .on
         FantasyPrefs.threshold = thresholds[max(0, thresholdPopup.indexOfSelectedItem)]
         onChange?()
