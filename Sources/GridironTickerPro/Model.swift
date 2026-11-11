@@ -254,6 +254,7 @@ enum ESPN {
         let number: Int
         let start: Date
         let end: Date
+        var label = ""   // "Week 10", "Wild Card", …
     }
 
     /// NFL weeks run Thursday to Wednesday, so a whole week (including Monday night) is one scoreboard.
@@ -275,7 +276,7 @@ enum ESPN {
             guard let type = Int(t.value) else { continue }
             for e in (t.entries ?? []).compactMap({ $0.value }) {
                 if let n = Int(e.value), let s = startParser.date(from: e.startDate), let en = startParser.date(from: e.endDate) {
-                    weeks.append(Week(type: type, number: n, start: s, end: en))
+                    weeks.append(Week(type: type, number: n, start: s, end: en, label: e.label ?? "Week \(n)"))
                 }
             }
         }
@@ -297,6 +298,12 @@ enum ESPN {
             weekLock.withLock { byes = ids }
         }
         return board.events.compactMap { $0.value }.compactMap(makeGame)
+    }
+
+    /// The week the calendar says it is now.
+    static func currentWeek() async -> Week? {
+        guard let weeks = try? await calendar() else { return nil }
+        return weeks[week(containing: Date(), in: weeks)]
     }
 
     /// The week that contains `day`.
@@ -394,6 +401,9 @@ enum ESPN {
 struct SummaryResponse: Decodable {
     let boxscore: Box?
     let drives: Drives?
+    let injuries: [Lossy<InjuryTeam>]?
+    struct InjuryTeam: Decodable { let injuries: [Lossy<Injury>]? }
+    struct Injury: Decodable { let status: String?; let athlete: Person? }
     struct Box: Decodable { let teams: [TeamBox]?; let players: [PlayersBox]? }
     struct TeamRef: Decodable { let id: String }
     struct TeamBox: Decodable { let team: TeamRef; let statistics: [Stat]? }
@@ -401,7 +411,7 @@ struct SummaryResponse: Decodable {
     struct PlayersBox: Decodable { let team: TeamRef; let statistics: [Group]? }
     struct Group: Decodable { let name: String?; let labels: [String]?; let athletes: [Athlete]? }
     struct Athlete: Decodable { let athlete: Person; let stats: [String]? }
-    struct Person: Decodable { let displayName: String? }
+    struct Person: Decodable { let id: String?; let displayName: String? }
     /// Play-by-play comes as drives: finished ones under `previous`, the one in progress under `current`.
     struct Drives: Decodable { let previous: [Lossy<Drive>]?; let current: Drive? }
     struct Drive: Decodable { let plays: [Lossy<Play>]? }

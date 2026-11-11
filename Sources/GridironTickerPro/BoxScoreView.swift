@@ -30,6 +30,9 @@ final class BoxScorePopover: NSObject {
         popover.animates = false
     }
 
+    /// Extra lines under a game stats (your fantasy players in it).
+    var extraLines: ((Game) -> [String])?
+
     func show(_ game: Game, in view: NSView, at x: CGFloat, below: Bool) {
         close()
         self.game = game
@@ -145,6 +148,11 @@ final class BoxScorePopover: NSObject {
             } else {
                 stack.addArrangedSubview(text("Loading box score…", color: .secondaryLabelColor))
             }
+        }
+
+        if game.state != .upcoming, !game.scoresHidden, let extra = extraLines?(game), !extra.isEmpty {
+            stack.addArrangedSubview(text("Your fantasy players", size: 11, weight: .semibold, color: .secondaryLabelColor))
+            for l in extra { stack.addArrangedSubview(text(l, color: Palette.favorite)) }
         }
 
         let button = FirstClickButton(title: "Open on ESPN", target: self, action: #selector(openESPN))

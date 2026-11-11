@@ -525,6 +525,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let settings = SettingsController()
     private let alerts = TeamAlerts()
     private let boxPopover = BoxScorePopover()
+    private let fantasyWindow = FantasyWindowController()
 
     private var games: [Game] = []          // today
     private var lookahead: [[Game]] = []    // tomorrow onward, one array per day
@@ -569,6 +570,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ticker.menu = menu
         ticker.onClick = { [weak self] i, x in self?.gameClicked(at: i, x: x) }
         boxPopover.onOpenESPN = { [weak self] g in self?.openESPN(g) }
+        boxPopover.extraLines = { g in FantasyStore.shared.lines(in: g) }
+        FantasyStore.shared.onChange = { [weak self] in self?.render(); self?.fantasyWindow.refresh() }
+        fantasyWindow.onChange = { [weak self] in
+            self?.render()
+            Task { @MainActor in
+                await FantasyStore.shared.refresh(games: self?.games ?? [], next: self?.lookahead.first ?? [], week: await ESPN.currentWeek())
+                self?.render()
+            }
+        }
         boxPopover.onVisibility = { [weak self] open in self?.ticker.hold(open) }
         LogoStore.shared.onLoad = { [weak self] in self?.render() }
 
@@ -667,7 +677,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func menuBarTitle() -> String {
-        if Prefs.menuBarScore, let g = menuBarGame() { return " " + menuBarText(g) }
+        let fp = FantasyPrefs.menuBar ? FantasyStore.shared.menuBarText : ""
+        if Prefs.menuBarScore, let g = menuBarGame() { return " " + menuBarText(g) + (fp.isEmpty ? "" : "  " + fp) }
+        if !fp.isEmpty { return " " + fp }
         let live = games.filter { $0.state == .live }.count
         return live > 0 ? " \(live)" : ""
     }
@@ -702,6 +714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 for g in games where g.involves(fav) { alerts.observe(g, favoriteID: fav) }
             }
             alerts.remind(games + (lookahead.first ?? []), followed: Set(Prefs.followedIDs))
+            await FantasyStore.shared.refresh(games: games, next: lookahead.first ?? [], week: await ESPN.currentWeek())
             render()
             ticker.flash(scoreChanges())
             if first, !games.isEmpty { ticker.resetToStart(); first = false }
@@ -852,7 +865,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             ticker.setColors(background: .black, accent: defaultAccent, accentHeight: 1)
         }
-        if Prefs.favoriteOnly, Prefs.favoriteTeamID != nil {
+        let fan = FantasyStore.shared.segments(font: font)
+        if FantasyPrefs.display == 2 {
+            shownGames = []
+            if fan.segments.isEmpty {
+                ticker.setCentered(NSAttributedString(string: "ADD PLAYERS UNDER FANTASY TEAM… IN THE MENU", attributes: [.font: font, .foregroundColor: Palette.dim]))
+            } else {
+                ticker.set(fan.segments, keys: fan.keys)
+            }
+        } else if Prefs.favoriteOnly, Prefs.favoriteTeamID != nil {
             shownGames = []
             let favOnBye = Prefs.favoriteTeamID.map { id in ESPN.byeTeamIDs.contains(id) && !games.contains { $0.involves(id) } } ?? false
             if !favOnBye, let g = favoriteGame() {
@@ -876,6 +897,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 t.append(NSAttributedString(string: "  BYE WEEK      ◆      ", attributes: [.font: font, .foregroundColor: Palette.dim]))
                 segments.insert(t, at: 0)
                 keys.insert("bye-\(id)", at: 0)
+            }
+            if FantasyPrefs.display == 1 {
+                segments = fan.segments + segments
+                keys = fan.keys + keys
             }
             ticker.set(segments, keys: keys)
         }
@@ -968,6 +993,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(item("Spoiler-Free Mode", #selector(toggleSpoilerFree), checked: Prefs.spoilerMode != 0))
         menu.addItem(item(panel.isVisible ? "Hide Ticker" : "Show Ticker", #selector(toggleTicker)))
         menu.addItem(item("Refresh Now", #selector(refreshNow)))
+        menu.addItem(item("Fantasy Team…", #selector(openFantasy), key: "f"))
         menu.addItem(item("Settings…", #selector(openSettings), key: ","))
         menu.addItem(item("Check for Updates…", #selector(checkForUpdates)))
         menu.addItem(.separator())
@@ -1009,6 +1035,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
     @objc private func openSettings() { settings.show() }
+    @objc private func openFantasy() { fantasyWindow.show() }
     @objc private func checkForUpdates() { UpdateService.shared.checkForUpdates() }
     @objc private func toggleFavoriteOnly() {
         Prefs.favoriteOnly.toggle()
