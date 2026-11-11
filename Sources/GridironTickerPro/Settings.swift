@@ -145,7 +145,7 @@ enum Prefs {
         get { d.stringArray(forKey: "channelFilter") ?? [] }
         set { d.set(newValue, forKey: "channelFilter") }
     }
-    /// Minutes before tip-off to remind about a followed team's game (0 = off).
+    /// Minutes before kickoff to remind about a followed team's game (0 = off).
     static var reminderMinutes: Int {
         get { d.integer(forKey: "reminderMinutes") }
         set { d.set(newValue, forKey: "reminderMinutes") }
@@ -255,7 +255,7 @@ final class SettingsController: NSObject {
         opacitySlider.isContinuous = true
         opacityLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .regular)
         clickPopup.addItems(withTitles: ["Shows a box score", "Opens the ESPN page"])
-        reminderPopup.addItems(withTitles: ["Off", "15 minutes before tip-off", "30 minutes before tip-off", "1 hour before tip-off"])
+        reminderPopup.addItems(withTitles: ["Off", "15 minutes before kickoff", "30 minutes before kickoff", "1 hour before kickoff"])
         channelPopup.addItem(withTitle: "All channels")
         channelPopup.isEnabled = false
         for c: NSControl in [teamPopup, spoilerPopup, marqueeBox, oddsBox, sizePopup, opacitySlider, clickPopup, reminderPopup, scoresBox, menuScoreBox, autoHideBox, favoriteOnlyBox, colorsBox, notifyBox, positionPopup, displayPopup, speedPopup, hoverBox, flashPopup, finalsBox, upcomingBox, recordsBox, logosBox, tagsBox, loginBox, updatesBox] {

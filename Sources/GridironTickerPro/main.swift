@@ -724,7 +724,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return out
     }
 
-    /// In only-my-team mode, the favorite's game today if it's live or about to tip off.
+    /// In only-my-team mode, the favorite's game today if it's live or about to kick off.
     private func quickRefreshGame() -> Game? {
         guard Prefs.favoriteOnly, let g = favoriteGame(), games.contains(where: { $0.id == g.id }) else { return nil }
         if g.state == .live { return g }

@@ -87,7 +87,7 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
 
     private var reminded = Set<String>()
 
-    /// Before tip-off, for followed teams: "Kentucky kicks off in 30 min". Once per game.
+    /// Before kickoff, for followed teams: "Chicago kicks off in 30 min". Once per game.
     /// Returns the ids it reminded about (for testing).
     @discardableResult
     func remind(_ games: [Game], followed: Set<String>, now: Date = Date()) -> [String] {
