@@ -12,6 +12,7 @@ A scrolling, LED-style NFL score ticker for your Mac.
 - **Optional betting odds.** Turn on the spread and over/under in Settings. Off by default.
 - **Badges.** A red **CLOSE** badge for late one-score games, **UPSET ALERT** when a big favorite is trailing, and a gold **MARQUEE** badge when two strong teams meet.
 - **Click for a box score.** Team stats, top passer, rusher and receiver, the last play for live games, and a button to open the game on ESPN.
+- **Fantasy team.** Pick your QBs, RBs, WRs, TEs, kickers and D/ST, plus an optional opponent, under **Fantasy Team…** in the menu. Live points use ESPN standard scoring, with a matchup line, a menu-bar total, alerts for touchdowns, point milestones and injuries, and a history of past weeks. Your roster stays on your Mac.
 - **Filter by channel.** Show only games on the channels you have. Your followed teams always come through.
 - **Playoffs.** Wild Card through the Super Bowl, with round labels.
 - **Spoiler-free mode.** Hide scores (and the alerts that would give them away) for games you're recording.
