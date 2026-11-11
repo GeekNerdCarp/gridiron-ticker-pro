@@ -9,8 +9,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${GRIDIRON_VERSION:-1.1.1}"
-BUILD="${GRIDIRON_BUILD:-3}"     # must go up with every release: Sparkle compares it to decide what's newer
+VERSION="${GRIDIRON_VERSION:-1.1.2}"
+BUILD="${GRIDIRON_BUILD:-4}"     # must go up with every release: Sparkle compares it to decide what's newer
 BUNDLE_ID="${GRIDIRON_BUNDLE_ID:-app.gridirontickerpro.mac}"
 FEED_URL="${GRIDIRON_FEED_URL:-https://github.com/GeekNerdCarp/gridiron-ticker-pro/releases/latest/download/appcast.xml}"
 PUBLIC_KEY="DF+W9Oxmnawg0meDOk/ecm7s1tZ89uh9irrYM4M9spg="   # Sparkle's public EdDSA key; the private half stays in the maintainer's Keychain
