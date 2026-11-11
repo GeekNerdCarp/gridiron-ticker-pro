@@ -108,6 +108,8 @@ struct Ev: Decodable {
     let date: String
     let status: StatusJSON?          // scoreboard puts status here…
     let competitions: [Comp]
+    let season: Season?              // type 2 regular season, 3 postseason
+    struct Season: Decodable { let type: Int? }
     struct Comp: Decodable {
         let status: StatusJSON?      // …team schedule puts it here
         let competitors: [CompetitorJSON]
@@ -332,12 +334,21 @@ enum ESPN {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    /// "Wild Card Playoffs" -> "WILD CARD", "NFC Championship" -> "NFC CHAMPIONSHIP", "Super Bowl LXI" -> "SUPER BOWL LXI".
+    static func roundLabel(_ headline: String) -> String? {
+        var h = headline.trimmingCharacters(in: .whitespaces)
+        for tail in [" Playoffs", " Round"] where h.hasSuffix(tail) { h = String(h.dropLast(tail.count)) }
+        return h.isEmpty ? nil : h.uppercased()
+    }
+
     private static func makeGame(_ e: Ev) -> Game? {
         guard let comp = e.competitions.first,
               let status = e.status ?? comp.status,
               let away = comp.competitors.first(where: { $0.homeAway == "away" }),
               let home = comp.competitors.first(where: { $0.homeAway == "home" }) else { return nil }
 
+        // Playoff games whose teams aren't decided yet come as "TBD at TBD" with negative ids; skip them.
+        if away.team.id.hasPrefix("-") && home.team.id.hasPrefix("-") { return nil }
         let headline = comp.notes?.compactMap { $0.value?.headline }.first ?? ""
         func side(_ c: CompetitorJSON) -> Side {
             Side(teamID: c.team.id,
@@ -370,7 +381,7 @@ enum ESPN {
             game.odds = o.details
             game.overUnder = o.overUnder
         }
-        _ = headline   // postseason round labels come in a later phase
+        if e.season?.type == 3 { game.round = roundLabel(headline) }
         game.period = status.period ?? 0
         game.clock = status.clock ?? 0
         game.isHalftime = status.type.name == "STATUS_HALFTIME"

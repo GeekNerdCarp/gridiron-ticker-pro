@@ -34,7 +34,7 @@ final class LogoStore {
     /// The logo for a team, or nil while it loads (or if there isn't one).
     func attachment(for teamID: String, font: NSFont) -> NSTextAttachment? {
         if let a = attachments[teamID] { return a }
-        guard !teamID.isEmpty, !missing.contains(teamID), loading.insert(teamID).inserted else { return nil }
+        guard !teamID.isEmpty, !teamID.hasPrefix("-"), !missing.contains(teamID), loading.insert(teamID).inserted else { return nil }
         let file = cacheDir.appendingPathComponent("\(teamID).png")
         if let img = NSImage(contentsOf: file) {
             loading.remove(teamID)
