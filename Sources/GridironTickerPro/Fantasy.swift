@@ -264,6 +264,8 @@ extension ESPN {
         func teamStat(_ team: String, _ name: String) -> String {
             r.boxscore?.teams?.first { $0.team.id == team }?.statistics?.first { $0.name == name }?.displayValue ?? ""
         }
+        // Before kickoff the feed has no team stats yet; a D/ST would otherwise score a perfect 10.
+        guard !teamStat(ids[0], "totalYards").isEmpty || !teamStat(ids[1], "totalYards").isEmpty else { return }
         for id in ids {
             let o = opp(id)
             var s = FantasyStats()
