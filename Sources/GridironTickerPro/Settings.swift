@@ -91,6 +91,11 @@ enum Prefs {
     }
 
     /// Mac notifications for the favorite team's games.
+    /// Alert on every score (touchdown, field goal…) in your team's games. On by default once notifications are on.
+    static var notifyScores: Bool {
+        get { d.object(forKey: "notifyScores") as? Bool ?? true }
+        set { d.set(newValue, forKey: "notifyScores") }
+    }
     static var notifyFavorite: Bool {
         get { d.bool(forKey: "notifyFavorite") }
         set { d.set(newValue, forKey: "notifyFavorite") }
@@ -243,6 +248,7 @@ final class SettingsController: NSObject {
     private let tagsBox = NSButton(checkboxWithTitle: "Close-game tags", target: nil, action: nil)
     private let favoriteOnlyBox = NSButton(checkboxWithTitle: "Show only my team's game", target: nil, action: nil)
     private let colorsBox = NSButton(checkboxWithTitle: "Use my team's colors", target: nil, action: nil)
+    private let scoresBox = NSButton(checkboxWithTitle: "Alert on every score", target: nil, action: nil)
     private let notifyBox = NSButton(checkboxWithTitle: "Notify me about my team's games", target: nil, action: nil)
     private let loginBox = NSButton(checkboxWithTitle: "Open Gridiron Ticker Pro when you log in", target: nil, action: nil)
     private let updatesBox = NSButton(checkboxWithTitle: "Check for updates automatically", target: nil, action: nil)
@@ -273,7 +279,7 @@ final class SettingsController: NSObject {
         reminderPopup.addItems(withTitles: ["Off", "15 minutes before tip-off", "30 minutes before tip-off", "1 hour before tip-off"])
         channelPopup.addItem(withTitle: "All channels")
         channelPopup.isEnabled = false
-        for c: NSControl in [teamPopup, conferencePopup, spoilerPopup, marqueeBox, oddsBox, pollBox, sizePopup, opacitySlider, clickPopup, reminderPopup, menuScoreBox, autoHideBox, favoriteOnlyBox, colorsBox, notifyBox, positionPopup, displayPopup, speedPopup, hoverBox, flashPopup, rankedBox, finalsBox, upcomingBox, recordsBox, logosBox, tagsBox, loginBox, updatesBox] {
+        for c: NSControl in [teamPopup, conferencePopup, spoilerPopup, marqueeBox, oddsBox, pollBox, sizePopup, opacitySlider, clickPopup, reminderPopup, scoresBox, menuScoreBox, autoHideBox, favoriteOnlyBox, colorsBox, notifyBox, positionPopup, displayPopup, speedPopup, hoverBox, flashPopup, rankedBox, finalsBox, upcomingBox, recordsBox, logosBox, tagsBox, loginBox, updatesBox] {
             c.target = self
             c.action = #selector(changed(_:))
         }
@@ -286,10 +292,10 @@ final class SettingsController: NSObject {
             "Holds that one game still in the middle of the ticker and updates the score every 10 seconds while it's live.")
         onlyHint.font = .systemFont(ofSize: 11)
         onlyHint.textColor = .secondaryLabelColor
-        let notifyHint = NSTextField(wrappingLabelWithString: "Tip-off, halftime, a close finish, and the final score.")
+        let notifyHint = NSTextField(wrappingLabelWithString: "Kickoff, halftime, overtime, a close finish, and the final score.")
         notifyHint.font = .systemFont(ofSize: 11)
         notifyHint.textColor = .secondaryLabelColor
-        let notifyStack = NSStackView(views: [notifyBox, notifyHint])
+        let notifyStack = NSStackView(views: [notifyBox, scoresBox, notifyHint])
         notifyStack.orientation = .vertical
         notifyStack.alignment = .leading
         notifyStack.spacing = 2
@@ -535,6 +541,7 @@ final class SettingsController: NSObject {
         colorsBox.state = Prefs.useTeamColors ? .on : .off
         colorsBox.isEnabled = Prefs.favoriteTeamID != nil && Prefs.favoriteOnly
         notifyBox.state = Prefs.notifyFavorite ? .on : .off
+        scoresBox.state = Prefs.notifyScores ? .on : .off
         notifyBox.isEnabled = Prefs.favoriteTeamID != nil
         positionPopup.selectItem(at: Prefs.atTop ? 1 : 0)
         syncExtras()
@@ -694,6 +701,8 @@ final class SettingsController: NSObject {
         case colorsBox:
             Prefs.useTeamColors = colorsBox.state == .on
             onChange?(.display)
+        case scoresBox:
+            Prefs.notifyScores = scoresBox.state == .on
         case notifyBox:
             guard notifyBox.state == .on else { Prefs.notifyFavorite = false; return }
             TeamAlerts.requestPermission { [weak self] ok in

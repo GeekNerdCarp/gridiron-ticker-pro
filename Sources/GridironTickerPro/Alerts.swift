@@ -2,11 +2,11 @@ import AppKit
 @preconcurrency import UserNotifications
 
 /// Watches the favorite team's game between refreshes and posts a Mac notification
-/// when something happens: tip-off, halftime, a close finish, and the final.
+/// when something happens: kickoff, scores, halftime, overtime, a close finish, and the final.
 /// Only changes it actually sees fire, so relaunching mid-game doesn't replay old news.
 @MainActor
 final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
-    enum Event: Equatable { case tipoff, halftime, closeGame, final }
+    enum Event: Equatable { case kickoff, score(team: String, points: Int, total: Int), halftime, overtime, closeGame, final }
 
     private var last: [String: Game] = [:]          // game id -> previous snapshot
     private var sent: [String: Set<String>] = [:]   // game id -> events already posted
@@ -17,8 +17,16 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
         defer { last[g.id] = g }
         guard let prev = last[g.id] else { return [] }
         var events: [Event] = []
-        if prev.state == .upcoming && g.state == .live { events.append(.tipoff) }
+        if prev.state == .upcoming && g.state == .live { events.append(.kickoff) }
+        if Prefs.notifyScores, g.state == .live, !g.scoresHidden {
+            for (before, now) in [(prev.away, g.away), (prev.home, g.home)] {
+                if let b = Int(before.score ?? ""), let n = Int(now.score ?? ""), n > b {
+                    events.append(.score(team: now.name, points: n - b, total: n))
+                }
+            }
+        }
         if !prev.isHalftime && g.isHalftime { events.append(.halftime) }
+        if prev.period < 5 && g.period >= 5 && g.state == .live { events.append(.overtime) }
         if g.isCloseLate && !g.scoresHidden { events.append(.closeGame) }
         if prev.state != .final && g.state == .final { events.append(.final) }
 
@@ -42,8 +50,20 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
         let hidden = g.scoresHidden
 
         switch e {
-        case .tipoff:
-            return ("\(mine.name) tips off", "\(label(g.away)) @ \(label(g.home))\(tv)")
+        case .kickoff:
+            return ("\(mine.name) kick off", "\(label(g.away)) @ \(label(g.home))\(tv)")
+        case .score(let team, let points, _):
+            let what: String
+            switch points {
+            case 6, 7, 8: what = "TOUCHDOWN"
+            case 3: what = "FIELD GOAL"
+            case 2: what = "SAFETY / 2-PT"
+            case 1: what = "EXTRA POINT"
+            default: what = "SCORE (+\(points))"
+            }
+            return ("\(what): \(team)", "\(line) · \(g.detail)")
+        case .overtime:
+            return ("Overtime!", hidden ? "Score hidden (spoiler-free mode)" : line)
         case .halftime:
             return ("Halftime", hidden ? "Score hidden (spoiler-free mode)" : line)
         case .closeGame:
