@@ -51,6 +51,8 @@ final class BoxScorePopover: NSObject {
         render()
         popover.show(relativeTo: NSRect(x: x - 1, y: 0, width: 2, height: view.bounds.height), of: view,
                      preferredEdge: below ? .minY : .maxY)
+        // The ticker now sits just under the Dock; the popup must stay above it.
+        popover.contentViewController?.view.window?.level = .statusBar
         if !Ease.reduced, let v = popover.contentViewController?.view {
             v.alphaValue = 0
             NSAnimationContext.runAnimationGroup { ctx in
@@ -130,8 +132,9 @@ final class BoxScorePopover: NSObject {
         let header = BoxHeaderView()
         header.game = game
         let awayHex = teamColors?(game.away.teamID), homeHex = teamColors?(game.home.teamID)
-        header.awayColor = boxAccent(awayHex)
-        header.homeColor = boxAccent(homeHex)
+        let (awayAcc, homeAcc) = boxPair(awayHex, homeHex)
+        header.awayColor = awayAcc
+        header.homeColor = homeAcc
         header.awayLogo = LogoStore.shared.attachment(for: game.away.teamID, abbr: game.away.abbr, font: .systemFont(ofSize: 12))?.image
         header.homeLogo = LogoStore.shared.attachment(for: game.home.teamID, abbr: game.home.abbr, font: .systemFont(ofSize: 12))?.image
         if header.awayLogo == nil || header.homeLogo == nil, logoRetries < 4 {
@@ -170,7 +173,7 @@ final class BoxScorePopover: NSObject {
             stack.addArrangedSubview(text("Scores are hidden (spoiler-free mode).", color: .secondaryLabelColor))
         } else if game.state != .upcoming {
             if let box, let a = box.lines[game.away.teamID], let h = box.lines[game.home.teamID], !a.stats.isEmpty {
-                let awayC = boxAccent(awayHex), homeC = boxAccent(homeHex)
+                let awayC = awayAcc, homeC = homeAcc
                 let seg = NSSegmentedControl(labels: ["Stats", "Leaders", "Scoring"], trackingMode: .selectOne, target: self, action: #selector(tabChanged(_:)))
                 seg.selectedSegment = tab
                 seg.segmentDistribution = .fillEqually

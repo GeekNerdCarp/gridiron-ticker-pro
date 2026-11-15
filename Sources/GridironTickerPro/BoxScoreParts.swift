@@ -3,17 +3,35 @@ import AppKit
 // Drawing helpers for the box-score popup: scoreboard header, stat bars and leader cards.
 
 /// A team's color that reads on a dark background: the brighter of its two colors, lifted if it's still dim.
-func boxAccent(_ hex: (String?, String?)?) -> NSColor {
+/// A team color that reads on a dark background. Dark primaries (Vikings purple, Packers green, Patriots navy) are
+/// brightened with their hue kept; only near-black ones (Raiders, Steelers) fall back to the alternate color.
+func boxAccent(_ hex: (String?, String?)?, alternate: Bool = false) -> NSColor {
+    func lift(_ c: NSColor) -> NSColor {
+        guard c.luminance < 0.14, let s = c.usingColorSpace(.sRGB) else { return c }
+        var h: CGFloat = 0, sat: CGFloat = 0, br: CGFloat = 0, a: CGFloat = 0
+        s.getHue(&h, saturation: &sat, brightness: &br, alpha: &a)
+        return NSColor(hue: h, saturation: sat, brightness: max(br, 0.7), alpha: 1)
+    }
     let primary = NSColor(hex: hex?.0), alt = NSColor(hex: hex?.1)
-    if let p = primary, p.luminance >= 0.12 { return p }
-    if let a = alt, a.luminance >= 0.12 { return a }
-    guard let c = primary ?? alt else { return NSColor(calibratedWhite: 0.6, alpha: 1) }
-    return c.blended(withFraction: 0.5, of: .white) ?? c
+    if alternate, let a = alt { return lift(a) }
+    if let p = primary, p.luminance > 0.012 { return lift(p) }
+    if let a = alt { return lift(a) }
+    return primary.map(lift) ?? NSColor(calibratedWhite: 0.6, alpha: 1)
 }
 
-private func differ(_ a: NSColor, _ b: NSColor) -> Bool {
+/// Both teams' colors, kept apart: if the two look alike, one team switches to its alternate color
+/// (the away team first, so a navy team facing a blue team shows its red).
+func boxPair(_ away: (String?, String?)?, _ home: (String?, String?)?) -> (away: NSColor, home: NSColor) {
+    for (aAlt, hAlt) in [(false, false), (true, false), (false, true), (true, true)] {
+        let a = boxAccent(away, alternate: aAlt), h = boxAccent(home, alternate: hAlt)
+        if differ(a, h) { return (a, h) }
+    }
+    return (boxAccent(away), NSColor(calibratedWhite: 0.7, alpha: 1))
+}
+
+func differ(_ a: NSColor, _ b: NSColor) -> Bool {
     guard let x = a.usingColorSpace(.sRGB), let y = b.usingColorSpace(.sRGB) else { return true }
-    return abs(x.redComponent - y.redComponent) + abs(x.greenComponent - y.greenComponent) + abs(x.blueComponent - y.blueComponent) > 0.35
+    return abs(x.redComponent - y.redComponent) + abs(x.greenComponent - y.greenComponent) + abs(x.blueComponent - y.blueComponent) > 0.45
 }
 
 private func attrs(_ size: CGFloat, _ weight: NSFont.Weight = .regular, _ color: NSColor = .white, mono: Bool = false, rounded: Bool = false) -> [NSAttributedString.Key: Any] {
