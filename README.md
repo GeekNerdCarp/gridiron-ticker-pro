@@ -17,6 +17,7 @@ A native, LED-style ticker for macOS that follows the whole NFL week: live score
 ## The ticker
 
 - **The whole NFL week.** Live scores with quarter and clock, today's finals, and upcoming games with kickoff time and TV channel. Team logos and records (ties included, like 5-2-1).
+- **Live game situation.** See who has the ball (●), the down, distance and spot (`2ND & 9 AT LV 48`), and a red **RED ZONE** badge when a team gets inside the 20.
 - **Spreads and over/unders** (optional). Turn on ESPN's betting line in Settings. Off by default.
 - **Badges that matter.**
   - A red **CLOSE** badge for fourth-quarter and overtime games within one score and four minutes or less.
@@ -37,6 +38,7 @@ A native, LED-style ticker for macOS that follows the whole NFL week: live score
 - **Hide the bar until you need it.** It appears when your team is live or about to start.
 - **Team alerts.** Mac notifications for:
   - kickoff,
+  - a team entering the red zone,
   - every score, such as touchdown, field goal and safety,
   - halftime and overtime,
   - a close finish and the final result,
@@ -65,7 +67,7 @@ Click any game for a box score popup:
 
 - team stats side by side: total, passing and rushing yards, turnovers, first downs, third-down efficiency and time of possession,
 - each team's top passer, rusher and receiver,
-- the last play for live games,
+- for live games, the down and distance with a **mini field** showing the ball, the line to gain and both end zones, plus timeouts left and the last play,
 - your fantasy players in that game,
 - an **Open on ESPN** button. You can also set a click to open the ESPN page directly.
 
