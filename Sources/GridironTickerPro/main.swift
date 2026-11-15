@@ -560,7 +560,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         panel = NSPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered, defer: false)
-        panel.level = .statusBar
+        // Just under the Dock, so an auto-hiding Dock slides up over the ticker instead of behind it.
+        panel.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.dockWindow)) - 1)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -579,7 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ticker.menu = menu
         ticker.onClick = { [weak self] i, x in self?.gameClicked(at: i, x: x) }
         boxPopover.onOpenESPN = { [weak self] g in self?.openESPN(g) }
-        boxPopover.extraLines = { g in FantasyStore.shared.lines(in: g) }
+        boxPopover.fantasyEntries = { g in FantasyStore.shared.entries(in: g) }
         PlayerPhotos.shared.onLoad = { [weak self] in self?.boxPopover.refreshIfShown() }
         boxPopover.teamColors = { [weak self] id in self?.teamColors[id] }
         FantasyStore.shared.onChange = { [weak self] in self?.render(); self?.fantasyWindow.refresh() }

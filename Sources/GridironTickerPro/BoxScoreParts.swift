@@ -16,9 +16,29 @@ private func differ(_ a: NSColor, _ b: NSColor) -> Bool {
     return abs(x.redComponent - y.redComponent) + abs(x.greenComponent - y.greenComponent) + abs(x.blueComponent - y.blueComponent) > 0.35
 }
 
-private func attrs(_ size: CGFloat, _ weight: NSFont.Weight = .regular, _ color: NSColor = .white, mono: Bool = false) -> [NSAttributedString.Key: Any] {
-    [.font: mono ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight),
-     .foregroundColor: color]
+private func attrs(_ size: CGFloat, _ weight: NSFont.Weight = .regular, _ color: NSColor = .white, mono: Bool = false, rounded: Bool = false) -> [NSAttributedString.Key: Any] {
+    var font = mono ? NSFont.monospacedDigitSystemFont(ofSize: size, weight: weight) : NSFont.systemFont(ofSize: size, weight: weight)
+    if rounded, let d = font.fontDescriptor.withDesign(.rounded), let f = NSFont(descriptor: d, size: size) { font = f }
+    return [.font: font, .foregroundColor: color]
+}
+
+/// Plays a short ease-out 0...1 value into `update`, unless the user has Reduce Motion on.
+@MainActor
+final class Ease {
+    private var timer: Timer?
+    static var reduced: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+    func run(duration: TimeInterval = 0.4, _ update: @escaping (CGFloat) -> Void) {
+        timer?.invalidate()
+        guard !Ease.reduced else { update(1); return }
+        let start = Date()
+        update(0)
+        timer = Timer.scheduledTimer(withTimeInterval: 1 / 60, repeats: true) { [weak self] t in
+            let x = min(1, CGFloat(Date().timeIntervalSince(start) / duration))
+            update(1 - (1 - x) * (1 - x) * (1 - x))
+            if x >= 1 { t.invalidate(); self?.timer = nil }
+        }
+    }
+    deinit { timer?.invalidate() }
 }
 
 private extension NSString {
@@ -80,7 +100,7 @@ final class BoxHeaderView: NSView {
 
         let midY: CGFloat = 32
         if showScores {
-            let big = { (won: Bool, lost: Bool) in attrs(36, .heavy, NSColor(white: 1, alpha: lost ? 0.5 : 1), mono: true) }
+            let big = { (won: Bool, lost: Bool) in attrs(38, .black, NSColor(white: 1, alpha: lost ? 0.5 : 1), rounded: true) }
             let aStr = (g.away.score ?? "0") as NSString, hStr = (g.home.score ?? "0") as NSString
             let aa = big(awayWon, homeWon), ha = big(homeWon, awayWon)
             let aw = aStr.size(withAttributes: aa)
@@ -130,6 +150,9 @@ final class StatBarsView: NSView {
     var rows: [Row] = [] { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
     var awayColor = NSColor.gray, homeColor = NSColor.gray
     var awayName = "", homeName = ""
+    private var progress: CGFloat = 1
+    private let ease = Ease()
+    func animateIn() { ease.run { [weak self] v in self?.progress = v; self?.needsDisplay = true } }
     override var isFlipped: Bool { true }
     private let rowH: CGFloat = 34
     override var intrinsicContentSize: NSSize { NSSize(width: 308, height: 20 + CGFloat(rows.count) * rowH) }
@@ -171,7 +194,7 @@ final class StatBarsView: NSView {
             NSColor(white: 1, alpha: 0.08).setFill()
             NSBezierPath(roundedRect: track, xRadius: 3.5, yRadius: 3.5).fill()
             if let a, let h, a + h > 0, !row.away.contains("-") || row.label != "3RD" {
-                let share = CGFloat(a / (a + h))
+                let share = 0.5 + (CGFloat(a / (a + h)) - 0.5) * progress
                 let split = bx + bw * share
                 NSGraphicsContext.saveGraphicsState()
                 NSBezierPath(roundedRect: track, xRadius: 3.5, yRadius: 3.5).addClip()
@@ -265,7 +288,7 @@ final class LineScoreView: NSView {
                 (v as NSString).drawCentered(in: NSRect(x: nameW + CGFloat(i) * colW, y: y, width: colW, height: 20),
                                              attrs(12, strong ? .semibold : .regular, NSColor(white: 1, alpha: strong ? 0.95 : 0.4), mono: true))
             }
-            (total as NSString).drawCentered(in: NSRect(x: bounds.width - totalW, y: y, width: totalW, height: 20), attrs(14, .heavy, .white, mono: true))
+            (total as NSString).drawCentered(in: NSRect(x: bounds.width - totalW, y: y, width: totalW, height: 20), attrs(15, .black, .white, rounded: true))
         }
     }
 }
@@ -278,6 +301,9 @@ final class WinProbView: NSView {
     var away = "", home = ""
     var awayColor = NSColor.gray, homeColor = NSColor.gray
     var live = false
+    private var progress: CGFloat = 1
+    private let ease = Ease()
+    func animateIn() { ease.run(duration: 0.6) { [weak self] v in self?.progress = v; self?.needsDisplay = true } }
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: 308, height: 92) }
 
@@ -293,12 +319,14 @@ final class WinProbView: NSView {
             NSPoint(x: chart.minX + chart.width * CGFloat(i) / CGFloat(probs.count - 1),
                     y: chart.minY + chart.height * (1 - CGFloat(min(max(probs[i], 0), 1))))
         }
+        let shown = max(2, Int(CGFloat(probs.count) * progress))
         let line = NSBezierPath()
         line.move(to: pt(0))
-        for i in 1..<probs.count { line.line(to: pt(i)) }
+        for i in 1..<shown { line.line(to: pt(i)) }
+        let lastShown = pt(shown - 1)
         // Fill between the line and the 50% mark: home color where the home team leads, away color where it trails.
         let area = line.copy() as! NSBezierPath
-        area.line(to: NSPoint(x: chart.maxX, y: mid)); area.line(to: NSPoint(x: chart.minX, y: mid)); area.close()
+        area.line(to: NSPoint(x: lastShown.x, y: mid)); area.line(to: NSPoint(x: chart.minX, y: mid)); area.close()
         NSGraphicsContext.saveGraphicsState()
         NSBezierPath(roundedRect: chart, xRadius: 6, yRadius: 6).addClip()
         NSGraphicsContext.saveGraphicsState()
@@ -316,7 +344,7 @@ final class WinProbView: NSView {
         line.lineWidth = 1.6; line.lineJoinStyle = .round; line.stroke()
         NSGraphicsContext.restoreGraphicsState()
         // The latest point.
-        let last = pt(probs.count - 1)
+        let last = lastShown
         NSColor.white.setFill()
         NSBezierPath(ovalIn: NSRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)).fill()
         // Team labels and the current odds.
@@ -381,6 +409,46 @@ final class ScoringSummaryView: NSView {
             NSColor.white.setStroke(); ball.lineWidth = 0.7; ball.stroke()
             let l = NSBezierPath(); l.move(to: NSPoint(x: r.midX - 2, y: r.midY)); l.line(to: NSPoint(x: r.midX + 2, y: r.midY))
             l.lineWidth = 0.8; l.stroke()
+        }
+    }
+}
+
+// MARK: - Fantasy strip
+
+struct FantasyEntry { let name: String; let pos: String; let points: Double; let detail: String }
+
+/// Your fantasy players in this game: a gold card, names on the left, big points on the right.
+final class FantasyStripView: NSView {
+    var entries: [FantasyEntry] = [] { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    private let rowH: CGFloat = 38
+    override var intrinsicContentSize: NSSize { NSSize(width: 308, height: 34 + CGFloat(entries.count) * rowH) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let gold = Palette.favorite
+        let box = bounds.insetBy(dx: 0.5, dy: 0.5)
+        gold.withAlphaComponent(0.11).setFill()
+        NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12).fill()
+        gold.withAlphaComponent(0.4).setStroke()
+        let edge = NSBezierPath(roundedRect: box, xRadius: 12, yRadius: 12); edge.lineWidth = 1; edge.stroke()
+        ("★ YOUR FANTASY PLAYERS" as NSString).draw(at: NSPoint(x: 12, y: 10), withAttributes: [.font: NSFont.systemFont(ofSize: 9, weight: .bold), .foregroundColor: gold, .kern: 0.8])
+        let total = entries.reduce(0) { $0 + $1.points }
+        if entries.count > 1 {
+            let t = "TOTAL \(fantasyFormat(total))" as NSString
+            let ts = t.size(withAttributes: attrs(10, .bold))
+            t.draw(at: NSPoint(x: bounds.width - 12 - ts.width, y: 9), withAttributes: attrs(10, .bold, gold))
+        }
+        var y: CGFloat = 28
+        for e in entries {
+            (e.name as NSString).draw(at: NSPoint(x: 12, y: y + 2), withAttributes: attrs(13, .semibold))
+            ("\(e.pos)" as NSString).draw(at: NSPoint(x: 12 + (e.name as NSString).size(withAttributes: attrs(13, .semibold)).width + 6, y: y + 5), withAttributes: attrs(9, .bold, NSColor(white: 1, alpha: 0.45)))
+            let para = NSMutableParagraphStyle(); para.lineBreakMode = .byTruncatingTail
+            var da = attrs(10, .regular, NSColor(white: 1, alpha: 0.55)); da[.paragraphStyle] = para
+            (e.detail as NSString).draw(in: NSRect(x: 12, y: y + 19, width: bounds.width - 24 - 62, height: 13), withAttributes: da)
+            let pts = fantasyFormat(e.points) as NSString
+            let ps = pts.size(withAttributes: attrs(24, .black, gold, rounded: true))
+            pts.draw(at: NSPoint(x: bounds.width - 12 - ps.width, y: y + 2), withAttributes: attrs(24, .black, gold, rounded: true))
+            y += rowH
         }
     }
 }

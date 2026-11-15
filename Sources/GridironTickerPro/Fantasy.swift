@@ -333,10 +333,10 @@ final class FantasyStore {
     var opponentTotal: Double { opponent.reduce(0) { $0 + points($1) } }
     func isRostered(_ playerID: String) -> Bool { roster.contains { $0.id == playerID } }
 
-    /// "J. Allen 18.4 pts" lines for your players in a game, for the box-score popup.
-    func lines(in g: Game) -> [String] {
+    /// Your players in a game, for the box-score popup.
+    func entries(in g: Game) -> [FantasyEntry] {
         roster.filter { $0.teamID == g.away.teamID || $0.teamID == g.home.teamID }.map {
-            "★ \($0.short) (\($0.pos))  \(fantasyFormat(points($0))) pts" + (stats[$0.id].map { $0.line.isEmpty ? "" : " · " + $0.line } ?? "")
+            FantasyEntry(name: $0.short, pos: $0.pos, points: points($0), detail: stats[$0.id]?.line ?? "")
         }
     }
 
