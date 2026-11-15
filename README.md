@@ -63,17 +63,20 @@ D/ST tiers are approximate (ESPN's own published tables vary), and two-point con
 
 ## Click for the details
 
-Click any game for a box score popup:
+Click any game for a box score popup, styled in both teams' colors:
 
-- team stats side by side: total, passing and rushing yards, turnovers, first downs, third-down efficiency and time of possession,
-- each team's top passer, rusher and receiver,
-- for live games, the down and distance with a **mini field** showing the ball, the line to gain and both end zones, plus timeouts left and the last play,
-- your fantasy players in that game,
-- an **Open on ESPN** button. You can also set a click to open the ESPN page directly.
+- **Scoreboard header** with logos, records, big scores and a status pill (LIVE pulses). The winner's score stands out.
+- **Stats tab:** a quarter-by-quarter **line score**, a **win-probability chart** that tells the story of the game, and stat bars for total, passing and rushing yards, turnovers, first downs, third downs and time of possession.
+- **Leaders tab:** each team's top passer, rusher and receiver on cards with player **headshots**.
+- **Scoring tab:** every scoring play with the quarter, clock, a touchdown, field goal or safety icon, and the running score.
+- **For live games,** the down and distance, a **mini field** showing the ball, the line to gain and both end zones, timeouts left, the current drive and the last play.
+- **Your fantasy players** in that game on a gold card with big points.
+- An **Open on ESPN** button. You can also set a click to open the ESPN page directly.
+- Gentle motion (bars grow, the chart draws in) that switches off with macOS Reduce Motion.
 
 ## Make it yours
 
-- Top or bottom of the screen, on any display.
+- Top or bottom of the screen, on any display. At the bottom with an auto-hiding Dock, the Dock slides up over the ticker.
 - Four text sizes, bar opacity from see-through to solid, three scroll speeds, pause when the pointer is over it.
 - Team logos and records on or off, finals and upcoming games on or off.
 - Use your team's colors for the bar in only-my-team mode.
