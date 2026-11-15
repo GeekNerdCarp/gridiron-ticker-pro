@@ -34,7 +34,16 @@ final class BoxHeaderView: NSView {
     var game: Game?
     var awayColor = NSColor.gray, homeColor = NSColor.gray
     var awayLogo: NSImage?, homeLogo: NSImage?
+    private var pulse: Timer?
     override var isFlipped: Bool { true }
+
+    /// A live game's red dot breathes; the timer lives only while the header is on screen.
+    override func viewDidMoveToWindow() {
+        pulse?.invalidate(); pulse = nil
+        guard window != nil, game?.state == .live else { return }
+        pulse = Timer.scheduledTimer(withTimeInterval: 0.06, repeats: true) { [weak self] _ in self?.needsDisplay = true }
+    }
+    deinit { pulse?.invalidate() }
     override var intrinsicContentSize: NSSize { NSSize(width: 308, height: 108) }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -101,10 +110,16 @@ final class BoxHeaderView: NSView {
         label = label.trimmingCharacters(in: CharacterSet(charactersIn: " ·"))
         let pa = attrs(10, .bold, ink)
         let ps = (label as NSString).size(withAttributes: pa)
-        let pill = NSRect(x: r.midX - ps.width / 2 - 9, y: 68, width: ps.width + 18, height: 18)
+        let dotW: CGFloat = g.state == .live ? 12 : 0
+        let pill = NSRect(x: r.midX - (ps.width + dotW) / 2 - 9, y: 68, width: ps.width + dotW + 18, height: 18)
         fill.setFill()
         NSBezierPath(roundedRect: pill, xRadius: 9, yRadius: 9).fill()
-        (label as NSString).drawCentered(in: pill, pa)
+        if g.state == .live {
+            let a = 0.55 + 0.45 * sin(Date().timeIntervalSinceReferenceDate * 5)
+            NSColor.white.withAlphaComponent(CGFloat(a)).setFill()
+            NSBezierPath(ovalIn: NSRect(x: pill.minX + 9, y: pill.midY - 3, width: 6, height: 6)).fill()
+        }
+        (label as NSString).drawCentered(in: NSRect(x: pill.minX + dotW, y: pill.minY, width: pill.width - dotW, height: pill.height), pa)
     }
 }
 
@@ -212,6 +227,160 @@ final class LeaderCardsView: NSView {
                 (c.kind as NSString).draw(at: NSPoint(x: card.maxX - ks.width - 10, y: y + 6), withAttributes: attrs(9, .bold, NSColor(white: 1, alpha: 0.4)))
                 y += cardH
             }
+        }
+    }
+}
+
+// MARK: - Line score
+
+/// The classic quarter-by-quarter table: 1 2 3 4 (OT) and the total, one row per team.
+final class LineScoreView: NSView {
+    var away = "", home = ""
+    var awayPoints: [String] = [], homePoints: [String] = []
+    var awayTotal = "", homeTotal = ""
+    var awayColor = NSColor.gray, homeColor = NSColor.gray
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: 308, height: 66) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let n = max(4, awayPoints.count, homePoints.count)
+        let nameW: CGFloat = 46, totalW: CGFloat = 38
+        let colW = (bounds.width - nameW - totalW) / CGFloat(n)
+        let dim = NSColor(white: 1, alpha: 0.45)
+        func label(_ i: Int) -> String { i < 4 ? "\(i + 1)" : (n - 4 == 1 ? "OT" : "OT\(i - 3)") }
+        for i in 0..<n {
+            (label(i) as NSString).drawCentered(in: NSRect(x: nameW + CGFloat(i) * colW, y: 0, width: colW, height: 14), attrs(10, .semibold, dim))
+        }
+        ("T" as NSString).drawCentered(in: NSRect(x: bounds.width - totalW, y: 0, width: totalW, height: 14), attrs(10, .bold, dim))
+        for (row, (name, pts, total, color)) in [(away, awayPoints, awayTotal, awayColor), (home, homePoints, homeTotal, homeColor)].enumerated() {
+            let y = 18 + CGFloat(row) * 22
+            NSColor(white: 1, alpha: row == 0 ? 0.06 : 0.03).setFill()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: y, width: bounds.width, height: 20), xRadius: 6, yRadius: 6).fill()
+            color.setFill()
+            NSBezierPath(roundedRect: NSRect(x: 0, y: y + 3, width: 3, height: 14), xRadius: 1.5, yRadius: 1.5).fill()
+            (name as NSString).draw(at: NSPoint(x: 10, y: y + 3), withAttributes: attrs(12, .bold, color))
+            for i in 0..<n {
+                let v = i < pts.count ? pts[i] : "–"
+                let strong = v != "0" && v != "–"
+                (v as NSString).drawCentered(in: NSRect(x: nameW + CGFloat(i) * colW, y: y, width: colW, height: 20),
+                                             attrs(12, strong ? .semibold : .regular, NSColor(white: 1, alpha: strong ? 0.95 : 0.4), mono: true))
+            }
+            (total as NSString).drawCentered(in: NSRect(x: bounds.width - totalW, y: y, width: totalW, height: 20), attrs(14, .heavy, .white, mono: true))
+        }
+    }
+}
+
+// MARK: - Win probability
+
+/// The home team's chance to win through the game, as a small filled line chart.
+final class WinProbView: NSView {
+    var probs: [Double] = []      // home team's chance, 0...1
+    var away = "", home = ""
+    var awayColor = NSColor.gray, homeColor = NSColor.gray
+    var live = false
+    override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: 308, height: 92) }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let title = attrs(9, .semibold, NSColor(white: 1, alpha: 0.5))
+        ("WIN PROBABILITY" as NSString).draw(at: NSPoint(x: 0, y: 0), withAttributes: title)
+        guard probs.count > 1 else { return }
+        let chart = NSRect(x: 0, y: 16, width: bounds.width, height: 60)
+        let mid = chart.midY
+        NSColor(white: 1, alpha: 0.05).setFill()
+        NSBezierPath(roundedRect: chart, xRadius: 6, yRadius: 6).fill()
+        func pt(_ i: Int) -> NSPoint {
+            NSPoint(x: chart.minX + chart.width * CGFloat(i) / CGFloat(probs.count - 1),
+                    y: chart.minY + chart.height * (1 - CGFloat(min(max(probs[i], 0), 1))))
+        }
+        let line = NSBezierPath()
+        line.move(to: pt(0))
+        for i in 1..<probs.count { line.line(to: pt(i)) }
+        // Fill between the line and the 50% mark: home color where the home team leads, away color where it trails.
+        let area = line.copy() as! NSBezierPath
+        area.line(to: NSPoint(x: chart.maxX, y: mid)); area.line(to: NSPoint(x: chart.minX, y: mid)); area.close()
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(roundedRect: chart, xRadius: 6, yRadius: 6).addClip()
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: NSRect(x: chart.minX, y: chart.minY, width: chart.width, height: chart.height / 2)).addClip()
+        homeColor.withAlphaComponent(0.55).setFill(); area.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSGraphicsContext.saveGraphicsState()
+        NSBezierPath(rect: NSRect(x: chart.minX, y: mid, width: chart.width, height: chart.height / 2)).addClip()
+        awayColor.withAlphaComponent(0.55).setFill(); area.fill()
+        NSGraphicsContext.restoreGraphicsState()
+        NSColor(white: 1, alpha: 0.25).setStroke()
+        let m = NSBezierPath(); m.move(to: NSPoint(x: chart.minX, y: mid)); m.line(to: NSPoint(x: chart.maxX, y: mid))
+        m.lineWidth = 0.5; m.setLineDash([3, 3], count: 2, phase: 0); m.stroke()
+        NSColor.white.setStroke()
+        line.lineWidth = 1.6; line.lineJoinStyle = .round; line.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+        // The latest point.
+        let last = pt(probs.count - 1)
+        NSColor.white.setFill()
+        NSBezierPath(ovalIn: NSRect(x: last.x - 3, y: last.y - 3, width: 6, height: 6)).fill()
+        // Team labels and the current odds.
+        (home as NSString).draw(at: NSPoint(x: 6, y: chart.minY + 3), withAttributes: attrs(9, .bold, homeColor))
+        (away as NSString).draw(at: NSPoint(x: 6, y: chart.maxY - 14), withAttributes: attrs(9, .bold, awayColor))
+        let hp = probs[probs.count - 1]
+        let text = hp >= 0.5 ? "\(home) \(Int((hp * 100).rounded()))%" : "\(away) \(Int(((1 - hp) * 100).rounded()))%"
+        let ts = (text as NSString).size(withAttributes: title)
+        (text as NSString).draw(at: NSPoint(x: bounds.width - ts.width, y: 0), withAttributes: attrs(9, .bold, NSColor(white: 1, alpha: 0.8)))
+    }
+}
+
+// MARK: - Scoring summary
+
+final class ScoringSummaryView: NSView {
+    struct Item { let period: Int; let clock: String; let abbr: String; let color: NSColor; let text: String; let kind: String; let away: Int; let home: Int }
+    var items: [Item] = [] { didSet { invalidateIntrinsicContentSize(); needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    private let rowH: CGFloat = 24
+    override var intrinsicContentSize: NSSize { NSSize(width: 308, height: 16 + CGFloat(items.count) * rowH) }
+
+    private func quarter(_ p: Int) -> String { p >= 1 && p <= 4 ? "Q\(p)" : "OT" }
+
+    override func draw(_ dirtyRect: NSRect) {
+        ("SCORING" as NSString).draw(at: NSPoint(x: 0, y: 0), withAttributes: attrs(9, .semibold, NSColor(white: 1, alpha: 0.5)))
+        var y: CGFloat = 16
+        for it in items {
+            let icon = NSRect(x: 0, y: y + 3, width: 18, height: 18)
+            it.color.withAlphaComponent(0.25).setFill()
+            NSBezierPath(ovalIn: icon).fill()
+            drawIcon(it.kind, in: icon, color: it.color)
+            let head = "\(quarter(it.period)) \(it.clock) · \(it.abbr)"
+            (head as NSString).draw(at: NSPoint(x: 24, y: y + 1), withAttributes: attrs(9, .semibold, NSColor(white: 1, alpha: 0.5)))
+            let para = NSMutableParagraphStyle(); para.lineBreakMode = .byTruncatingTail
+            var a = attrs(11, .regular, .white); a[.paragraphStyle] = para
+            (it.text as NSString).draw(in: NSRect(x: 24, y: y + 11, width: bounds.width - 24 - 44, height: 13), withAttributes: a)
+            let score = "\(it.away)–\(it.home)"
+            let ss = (score as NSString).size(withAttributes: attrs(11, .semibold, mono: true))
+            (score as NSString).draw(at: NSPoint(x: bounds.width - ss.width, y: y + 6), withAttributes: attrs(11, .semibold, NSColor(white: 1, alpha: 0.8), mono: true))
+            y += rowH
+        }
+    }
+
+    /// A tiny football for touchdowns, goalposts for field goals, an S for a safety.
+    private func drawIcon(_ kind: String, in r: NSRect, color: NSColor) {
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        switch kind {
+        case "FG":
+            let p = NSBezierPath()
+            let cx = r.midX
+            p.move(to: NSPoint(x: cx, y: r.maxY - 3)); p.line(to: NSPoint(x: cx, y: r.midY + 1))
+            p.move(to: NSPoint(x: cx - 4, y: r.midY + 1)); p.line(to: NSPoint(x: cx + 4, y: r.midY + 1))
+            p.move(to: NSPoint(x: cx - 4, y: r.midY + 1)); p.line(to: NSPoint(x: cx - 4, y: r.minY + 3))
+            p.move(to: NSPoint(x: cx + 4, y: r.midY + 1)); p.line(to: NSPoint(x: cx + 4, y: r.minY + 3))
+            p.lineWidth = 1.4; NSColor.white.setStroke(); p.stroke()
+        case "SAF":
+            ("S" as NSString).drawCentered(in: r, attrs(10, .heavy, .white))
+        default:
+            let ball = NSBezierPath(ovalIn: NSRect(x: r.midX - 5.5, y: r.midY - 3.2, width: 11, height: 6.4))
+            NSColor(calibratedRed: 0.72, green: 0.38, blue: 0.16, alpha: 1).setFill(); ball.fill()
+            NSColor.white.setStroke(); ball.lineWidth = 0.7; ball.stroke()
+            let l = NSBezierPath(); l.move(to: NSPoint(x: r.midX - 2, y: r.midY)); l.line(to: NSPoint(x: r.midX + 2, y: r.midY))
+            l.lineWidth = 0.8; l.stroke()
         }
     }
 }

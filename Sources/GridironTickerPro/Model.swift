@@ -91,7 +91,7 @@ struct SituationJSON: Decodable {
     let homeTimeouts: Int?
     let awayTimeouts: Int?
     let lastPlay: LastPlay?
-    struct LastPlay: Decodable { let text: String? }
+    struct LastPlay: Decodable { let text: String?; let drive: Drive?; struct Drive: Decodable { let description: String? } }
 }
 
 struct Board: Decodable {
@@ -165,6 +165,7 @@ struct Situation {
     var isRedZone = false
     var homeTimeouts: Int? = nil, awayTimeouts: Int? = nil
     var lastPlay: String? = nil
+    var drive: String? = nil        // "8 plays, 52 yards, 3:40"
 }
 
 struct Game {
@@ -482,7 +483,8 @@ enum ESPN {
                                        text: s.downDistanceText ?? "", possessionID: s.possession,
                                        isRedZone: s.isRedZone ?? false, homeTimeouts: s.homeTimeouts,
                                        awayTimeouts: s.awayTimeouts,
-                                       lastPlay: s.lastPlay?.text?.trimmingCharacters(in: .whitespaces))
+                                       lastPlay: s.lastPlay?.text?.trimmingCharacters(in: .whitespaces),
+                                       drive: s.lastPlay?.drive?.description)
         }
         if state != .final, let o = comp.odds?.compactMap({ $0.value }).first {
             game.odds = o.details
@@ -504,18 +506,25 @@ struct SummaryResponse: Decodable {
     let injuries: [Lossy<InjuryTeam>]?
     let scoringPlays: [Lossy<ScoringPlay>]?
     let header: Header?
+    let winprobability: [Lossy<WinProb>]?
     struct ScoringPlay: Decodable {
         let text: String?
         let type: TypeText?
         let team: TeamRef?
         let awayScore: Int?
         let homeScore: Int?
+        let period: Play.Num?
+        let clock: Play.Clk?
+        let scoringType: TypeName?
     }
+    struct TypeName: Decodable { let name: String? }
+    struct WinProb: Decodable { let homeWinPercentage: Double? }
+    struct LineScore: Decodable { let displayValue: String? }
     struct TypeText: Decodable { let text: String? }
     struct Header: Decodable {
         let competitions: [Comp]?
         struct Comp: Decodable { let competitors: [Competitor]? }
-        struct Competitor: Decodable { let homeAway: String?; let team: TeamRef; let score: String? }
+        struct Competitor: Decodable { let homeAway: String?; let team: TeamRef; let score: String?; let linescores: [Lossy<LineScore>]? }
     }
     struct InjuryTeam: Decodable { let injuries: [Lossy<Injury>]? }
     struct Injury: Decodable { let status: String?; let athlete: Person? }
@@ -549,6 +558,10 @@ struct BoxScore {
         var leaderIDs: [String] = []     // ESPN athlete ids, for headshots
     }
     var lines: [String: Line] = [:]   // by team id
+    var lineScore: [String: [String]] = [:]   // team id -> points per period
+    struct Scoring { let period: Int; let clock: String; let teamID: String; let text: String; let kind: String; let away: Int; let home: Int }
+    var scoring: [Scoring] = []
+    var winProb: [Double] = []        // home team's chance to win, play by play (0...1)
     var lastPlay: String?
 }
 
@@ -597,6 +610,28 @@ extension ESPN {
             box.lines[pb.team.id, default: BoxScore.Line()].leaderKinds = kinds
             box.lines[pb.team.id, default: BoxScore.Line()].leaderIDs = ids
         }
+        for c in r.header?.competitions?.first?.competitors ?? [] {
+            box.lineScore[c.team.id] = (c.linescores ?? []).compactMap { $0.value?.displayValue }
+        }
+        box.scoring = (r.scoringPlays ?? []).compactMap { $0.value }.compactMap { sp in
+            guard let tid = sp.team?.id else { return nil }
+            let kind = (sp.scoringType?.name ?? "").contains("field") ? "FG" : ((sp.scoringType?.name ?? "").contains("safety") ? "SAF" : "TD")
+            var t = (sp.text ?? "").trimmingCharacters(in: .whitespaces)
+            if let i = t.firstIndex(of: "(") { t = t[..<i].trimmingCharacters(in: .whitespaces) }
+            // "Amon-Ra St. Brown 56 Yd pass from Jared Goff" -> "A. St. Brown 56 Yd pass from J. Goff"
+            func initial(_ name: Substring) -> String {
+                let w = name.split(separator: " ")
+                return w.count >= 2 ? "\(w[0].prefix(1)). " + w.dropFirst().joined(separator: " ") : String(name)
+            }
+            if let r = t.range(of: #" \d+ [Yy]d"#, options: .regularExpression) {
+                var rest = String(t[r.lowerBound...])
+                if let f = rest.range(of: " from ") { rest = String(rest[..<f.upperBound]) + initial(rest[f.upperBound...]) }
+                t = initial(t[..<r.lowerBound]) + rest
+            }
+            return BoxScore.Scoring(period: sp.period?.number ?? 0, clock: sp.clock?.displayValue ?? "", teamID: tid, text: t,
+                                    kind: kind, away: sp.awayScore ?? 0, home: sp.homeScore ?? 0)
+        }
+        box.winProb = (r.winprobability ?? []).compactMap { $0.value?.homeWinPercentage }
         let drives = (r.drives?.previous?.compactMap { $0.value } ?? []) + [r.drives?.current].compactMap { $0 }
         let plays = drives.flatMap { ($0.plays ?? []).compactMap { $0.value } }
         if let p = plays.last(where: { !($0.text ?? "").isEmpty && !($0.text ?? "").uppercased().hasPrefix("END ") }) {

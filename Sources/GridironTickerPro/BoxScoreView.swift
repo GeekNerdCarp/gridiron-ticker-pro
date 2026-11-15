@@ -87,6 +87,7 @@ final class BoxScorePopover: NSObject {
 
     private func render() {
         guard let game, let host = popover.contentViewController?.view else { return }
+        let oldScroll = (host.subviews.first as? NSScrollView)?.contentView.bounds.origin.y ?? 0
         host.subviews.forEach { $0.removeFromSuperview() }
 
         func text(_ s: String, size: CGFloat = 12, weight: NSFont.Weight = .regular, color: NSColor = .labelColor) -> NSTextField {
@@ -135,6 +136,9 @@ final class BoxScorePopover: NSObject {
             func dots(_ n: Int?) -> String { String(repeating: "●", count: max(0, min(3, n ?? 0))) + String(repeating: "○", count: 3 - max(0, min(3, n ?? 0))) }
             stack.addArrangedSubview(text("Timeouts   \(abbr(game.away)) \(dots(s.awayTimeouts))   \(abbr(game.home)) \(dots(s.homeTimeouts))",
                                           color: .secondaryLabelColor))
+            if let d = s.drive, !d.isEmpty {
+                stack.addArrangedSubview(text("Current drive: \(d)", color: .secondaryLabelColor))
+            }
             if let play = s.lastPlay, !play.isEmpty {
                 stack.addArrangedSubview(text("Last play", size: 11, weight: .semibold, color: .secondaryLabelColor))
                 stack.addArrangedSubview(text(play))
@@ -145,6 +149,22 @@ final class BoxScorePopover: NSObject {
             stack.addArrangedSubview(text("Scores are hidden (spoiler-free mode).", color: .secondaryLabelColor))
         } else if game.state != .upcoming {
             if let box, let a = box.lines[game.away.teamID], let h = box.lines[game.home.teamID], !a.stats.isEmpty {
+                let awayC = boxAccent(awayHex), homeC = boxAccent(homeHex)
+                if let aPts = box.lineScore[game.away.teamID], let hPts = box.lineScore[game.home.teamID], !aPts.isEmpty {
+                    let ls = LineScoreView()
+                    ls.away = abbr(game.away); ls.home = abbr(game.home)
+                    ls.awayPoints = aPts; ls.homePoints = hPts
+                    ls.awayTotal = game.away.score ?? ""; ls.homeTotal = game.home.score ?? ""
+                    ls.awayColor = awayC; ls.homeColor = homeC
+                    stack.addArrangedSubview(ls)
+                }
+                if box.winProb.count > 2 {
+                    let wp = WinProbView()
+                    wp.probs = box.winProb
+                    wp.away = abbr(game.away); wp.home = abbr(game.home)
+                    wp.awayColor = awayC; wp.homeColor = homeC
+                    stack.addArrangedSubview(wp)
+                }
                 let bars = StatBarsView()
                 bars.awayColor = boxAccent(awayHex)
                 bars.homeColor = boxAccent(homeHex)
@@ -153,6 +173,16 @@ final class BoxScorePopover: NSObject {
                     StatBarsView.Row(label: s.label, away: s.value, home: h.stats.indices.contains(i) ? h.stats[i].value : "–")
                 }
                 stack.addArrangedSubview(bars)
+                if !box.scoring.isEmpty {
+                    let ss = ScoringSummaryView()
+                    ss.items = box.scoring.map { sp in
+                        let side = sp.teamID == game.home.teamID ? game.home : game.away
+                        return ScoringSummaryView.Item(period: sp.period, clock: sp.clock, abbr: abbr(side),
+                                                       color: sp.teamID == game.home.teamID ? homeC : awayC,
+                                                       text: sp.text, kind: sp.kind, away: sp.away, home: sp.home)
+                    }
+                    stack.addArrangedSubview(ss)
+                }
                 let cards = LeaderCardsView()
                 cards.groups = [(game.away, a, boxAccent(awayHex)), (game.home, h, boxAccent(homeHex))].compactMap { side, line, color in
                     guard !line.leaders.isEmpty else { return nil }
@@ -186,16 +216,29 @@ final class BoxScorePopover: NSObject {
         button.bezelStyle = .rounded
         stack.addArrangedSubview(button)
 
-        host.addSubview(stack)
+        // Taller than the screen allows? Scroll, keeping your place across live refreshes.
+        let doc = FlippedView()
+        doc.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: host.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            stack.topAnchor.constraint(equalTo: doc.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
             stack.widthAnchor.constraint(equalToConstant: 340),
         ])
-        host.layoutSubtreeIfNeeded()
-        let size = NSSize(width: 340, height: stack.fittingSize.height)
-        host.setFrameSize(size)
-        popover.contentSize = size
+        doc.layoutSubtreeIfNeeded()
+        let fullH = stack.fittingSize.height
+        let maxH = max(400, (NSScreen.main?.visibleFrame.height ?? 800) - 140)
+        let h = min(fullH, maxH)
+        doc.frame = NSRect(x: 0, y: 0, width: 340, height: fullH)
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 340, height: h))
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = fullH > maxH
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
+        scroll.documentView = doc
+        host.addSubview(scroll)
+        host.setFrameSize(NSSize(width: 340, height: h))
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: min(oldScroll, max(0, fullH - h))))
+        popover.contentSize = NSSize(width: 340, height: h)
     }
 
     @objc private func openESPN() {
@@ -204,3 +247,5 @@ final class BoxScorePopover: NSObject {
         onOpenESPN?(game)
     }
 }
+
+private final class FlippedView: NSView { override var isFlipped: Bool { true } }
