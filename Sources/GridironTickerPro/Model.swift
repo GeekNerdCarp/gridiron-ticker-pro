@@ -79,6 +79,21 @@ struct OddsJSON: Decodable {
     let overUnder: Double?
 }
 
+/// Live only: {"down":2,"distance":9,"yardLine":48,"downDistanceText":"2nd & 9 at LV 48","possession":"26","isRedZone":false,...}.
+/// yardLine counts from the HOME team's goal line (0) to the away team's (100).
+struct SituationJSON: Decodable {
+    let down: Int?
+    let distance: Int?
+    let yardLine: Int?
+    let downDistanceText: String?
+    let possession: String?
+    let isRedZone: Bool?
+    let homeTimeouts: Int?
+    let awayTimeouts: Int?
+    let lastPlay: LastPlay?
+    struct LastPlay: Decodable { let text: String? }
+}
+
 struct Board: Decodable {
     let events: [Lossy<Ev>]
     let week: WeekInfo?
@@ -116,6 +131,7 @@ struct Ev: Decodable {
         let broadcasts: [Lossy<BroadcastJSON>]?
         let notes: [Lossy<Note>]?
         let odds: [Lossy<OddsJSON>]?
+        let situation: Lossy<SituationJSON>?
         struct Note: Decodable { let headline: String? }
     }
 }
@@ -140,6 +156,17 @@ struct Side {
     var abbr: String? = nil   // e.g. "UK"
 }
 
+/// Where the ball is and what's next, for a live game.
+struct Situation {
+    var down = 0, distance = 0
+    var yardLine: Int? = nil        // 0 = home goal line, 100 = away goal line
+    var text = ""                   // "2nd & 9 at LV 48"
+    var possessionID: String? = nil
+    var isRedZone = false
+    var homeTimeouts: Int? = nil, awayTimeouts: Int? = nil
+    var lastPlay: String? = nil
+}
+
 struct Game {
     let id: String
     let state: GameState
@@ -149,6 +176,7 @@ struct Game {
     let start: Date
     let network: String?   // e.g. "ESPN2", nil if ESPN doesn't list one
     var round: String? = nil   // postseason round, e.g. "WILD CARD" (set in a later phase)
+    var situation: Situation? = nil   // live games only
     var odds: String? = nil        // ESPN's line, e.g. "HOU -10"
     var overUnder: Double? = nil
     var period = 0
@@ -449,6 +477,13 @@ enum ESPN {
         let network = (casts.first { $0.national } ?? casts.first)?.name
         var game = Game(id: e.id, state: state, away: side(away), home: side(home), detail: detail,
                         start: start, network: network)
+        if state == .live, let s = comp.situation?.value {
+            game.situation = Situation(down: s.down ?? 0, distance: s.distance ?? 0, yardLine: s.yardLine,
+                                       text: s.downDistanceText ?? "", possessionID: s.possession,
+                                       isRedZone: s.isRedZone ?? false, homeTimeouts: s.homeTimeouts,
+                                       awayTimeouts: s.awayTimeouts,
+                                       lastPlay: s.lastPlay?.text?.trimmingCharacters(in: .whitespaces))
+        }
         if state != .final, let o = comp.odds?.compactMap({ $0.value }).first {
             game.odds = o.details
             game.overUnder = o.overUnder

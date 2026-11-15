@@ -6,7 +6,7 @@ import AppKit
 /// Only changes it actually sees fire, so relaunching mid-game doesn't replay old news.
 @MainActor
 final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
-    enum Event: Equatable { case kickoff, score(team: String, points: Int, total: Int), halftime, overtime, closeGame, final }
+    enum Event: Equatable { case kickoff, redZone(team: String, spot: String), score(team: String, points: Int, total: Int), halftime, overtime, closeGame, final }
 
     private var last: [String: Game] = [:]          // game id -> previous snapshot
     private var sent: [String: Set<String>] = [:]   // game id -> events already posted
@@ -24,6 +24,10 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
                     events.append(.score(team: now.name, points: n - b, total: n))
                 }
             }
+        }
+        if g.state == .live, !g.scoresHidden, prev.situation?.isRedZone != true, let s = g.situation, s.isRedZone {
+            let offense = s.possessionID == g.home.teamID ? g.home : g.away
+            events.append(.redZone(team: offense.name, spot: s.text))
         }
         if !prev.isHalftime && g.isHalftime { events.append(.halftime) }
         if prev.period < 5 && g.period >= 5 && g.state == .live { events.append(.overtime) }
@@ -60,6 +64,8 @@ final class TeamAlerts: NSObject, UNUserNotificationCenterDelegate {
             default: what = "SCORE (+\(points))"
             }
             return ("\(what): \(team)", "\(line) · \(g.detail)")
+        case .redZone(let team, let spot):
+            return ("RED ZONE: \(team)", "\(spot) · \(line)")
         case .overtime:
             return ("Overtime!", hidden ? "Score hidden (spoiler-free mode)" : line)
         case .halftime:

@@ -77,11 +77,12 @@ func buildTickerSegments(_ games: [Game], followed: Set<String>, font: NSFont, s
     func add(_ s: String, _ c: NSColor) {
         out.append(NSAttributedString(string: s, attributes: [.font: font, .foregroundColor: c]))
     }
-    func team(_ s: Side, showScore: Bool, live: Bool) {
+    func team(_ s: Side, showScore: Bool, live: Bool, hasBall: Bool = false) {
         if Prefs.showLogos, let logo = LogoStore.shared.attachment(for: s.teamID, abbr: s.abbr, font: font) {
             out.append(NSAttributedString(attachment: logo))
             add(" ", Palette.dim)
         }
+        if hasBall { add("● ", Palette.rank) }   // has the ball
         add(s.name.uppercased(), followed.contains(s.teamID) ? Palette.favorite : Palette.name)
         if Prefs.showRecords, let rec = s.record, !rec.isEmpty { add(" (\(rec))", Palette.dim) }
         if showScore, let sc = s.score { add(" \(sc)", live ? Palette.liveScore : Palette.score) }
@@ -116,12 +117,19 @@ func buildTickerSegments(_ games: [Game], followed: Set<String>, font: NSFont, s
                                                                           .backgroundColor: Palette.alert]))
             add("  ", Palette.dim)
         }
+        if g.state == .live, !hide, g.situation?.isRedZone == true {
+            out.append(NSAttributedString(string: " RED ZONE ", attributes: [.font: font, .foregroundColor: NSColor.white,
+                                                                           .backgroundColor: Palette.alert]))
+            add("  ", Palette.dim)
+        }
         switch g.state {
         case .live:
-            team(g.away, showScore: !hide, live: true)
+            let ball = hide ? nil : g.situation?.possessionID
+            team(g.away, showScore: !hide, live: true, hasBall: ball == g.away.teamID)
             add(hide ? "  @  " : "  –  ", Palette.dim)
-            team(g.home, showScore: !hide, live: true)
+            team(g.home, showScore: !hide, live: true, hasBall: ball == g.home.teamID)
             add("   \(hide ? "LIVE" : g.detail.uppercased())", Palette.live)
+            if !hide, let t = g.situation?.text, !t.isEmpty { add(" · \(t.uppercased())", Palette.rank) }
             if let r = g.round { add(" · \(r)", Palette.rank) }
             // Where to watch your own team's game while it's on.
             if mine, let n = g.network { add(" · \(n.uppercased())", Palette.network) }
@@ -817,7 +825,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             case .live:
                 if Prefs.showAlertTags && !g.scoresHidden {
                     if g.isUpsetBrewing { return 0 }
-                    if g.isCloseLate { return 1 }
+                    if g.isCloseLate || g.situation?.isRedZone == true { return 1 }
                 }
                 return Prefs.showMarquee && g.isMarquee ? 2 : 3
             case .upcoming: return 4

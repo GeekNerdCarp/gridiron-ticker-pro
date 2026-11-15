@@ -271,7 +271,7 @@ final class SettingsController: NSObject {
             "Holds that one game still in the middle of the ticker and updates the score every 10 seconds while it's live.")
         onlyHint.font = .systemFont(ofSize: 11)
         onlyHint.textColor = .secondaryLabelColor
-        let notifyHint = NSTextField(wrappingLabelWithString: "Kickoff, halftime, overtime, a close finish, and the final score.")
+        let notifyHint = NSTextField(wrappingLabelWithString: "Kickoff, red zone, halftime, overtime, a close finish, and the final score.")
         notifyHint.font = .systemFont(ofSize: 11)
         notifyHint.textColor = .secondaryLabelColor
         let notifyStack = NSStackView(views: [notifyBox, scoresBox, notifyHint])

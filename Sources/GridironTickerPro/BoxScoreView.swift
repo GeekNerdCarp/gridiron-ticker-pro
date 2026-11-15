@@ -113,6 +113,25 @@ final class BoxScorePopover: NSObject {
         let status = [statusText, game.round, game.network]
             .compactMap { $0 }.joined(separator: " · ")
         stack.addArrangedSubview(text(status, color: game.state == .live ? Palette.live : .secondaryLabelColor))
+        if game.state == .live, !game.scoresHidden, let s = game.situation {
+            let ball = s.possessionID == game.home.teamID ? game.home : game.away
+            if !s.text.isEmpty {
+                stack.addArrangedSubview(text("\(s.text) · \(ball.name) ball" + (s.isRedZone ? " · RED ZONE" : ""),
+                                              size: 13, weight: .semibold, color: Palette.rank))
+            }
+            let field = FieldView()
+            field.away = abbr(game.away); field.home = abbr(game.home)
+            field.situation = s
+            field.awayHasBall = ball.teamID == game.away.teamID
+            stack.addArrangedSubview(field)
+            func dots(_ n: Int?) -> String { String(repeating: "●", count: max(0, min(3, n ?? 0))) + String(repeating: "○", count: 3 - max(0, min(3, n ?? 0))) }
+            stack.addArrangedSubview(text("Timeouts   \(abbr(game.away)) \(dots(s.awayTimeouts))   \(abbr(game.home)) \(dots(s.homeTimeouts))",
+                                          color: .secondaryLabelColor))
+            if let play = s.lastPlay, !play.isEmpty {
+                stack.addArrangedSubview(text("Last play", size: 11, weight: .semibold, color: .secondaryLabelColor))
+                stack.addArrangedSubview(text(play))
+            }
+        }
         if game.state == .upcoming {
             let recs = [game.away, game.home].compactMap { s in s.record.map { "\(abbr(s)) \($0)" } }
             if !recs.isEmpty { stack.addArrangedSubview(text("Records: " + recs.joined(separator: "   "), color: .secondaryLabelColor)) }
@@ -139,7 +158,7 @@ final class BoxScorePopover: NSObject {
                     stack.addArrangedSubview(text(abbr(side), size: 11, weight: .semibold, color: .secondaryLabelColor))
                     for l in line.leaders { stack.addArrangedSubview(text(l)) }
                 }
-                if game.state == .live, let play = box.lastPlay {
+                if game.state == .live, game.situation?.lastPlay == nil, let play = box.lastPlay {
                     stack.addArrangedSubview(text("Last play", size: 11, weight: .semibold, color: .secondaryLabelColor))
                     stack.addArrangedSubview(text(play))
                 }
