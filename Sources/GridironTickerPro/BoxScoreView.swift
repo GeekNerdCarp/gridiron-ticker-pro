@@ -32,12 +32,16 @@ final class BoxScorePopover: NSObject {
 
     /// Extra lines under a game stats (your fantasy players in it).
     var extraLines: ((Game) -> [String])?
+    /// A team's (primary, alternate) color hex, for tinting the popup.
+    var teamColors: ((String) -> (String?, String?)?)?
+    private var logoRetries = 0
 
     func show(_ game: Game, in view: NSView, at x: CGFloat, below: Bool) {
         close()
         self.game = game
         box = nil
         failed = false
+        logoRetries = 0
         popover.contentViewController = NSViewController()
         popover.contentViewController!.view = NSView()
         render()
@@ -76,6 +80,9 @@ final class BoxScorePopover: NSObject {
         render()
     }
 
+    /// A headshot finished downloading.
+    func refreshIfShown() { if popover.isShown { render() } }
+
     // MARK: Content
 
     private func render() {
@@ -101,18 +108,19 @@ final class BoxScorePopover: NSObject {
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        // Headline and status
-        if game.state == .upcoming || game.scoresHidden {
-            stack.addArrangedSubview(text("\(name(game.away)) @ \(name(game.home))", size: 15, weight: .semibold))
-        } else {
-            stack.addArrangedSubview(text("\(name(game.away))  \(game.away.score ?? "0")", size: 15, weight: .semibold))
-            stack.addArrangedSubview(text("\(name(game.home))  \(game.home.score ?? "0")", size: 15, weight: .semibold))
+        // Scoreboard header: logos, records, scores and a status pill, tinted with both teams' colors.
+        let header = BoxHeaderView()
+        header.game = game
+        let awayHex = teamColors?(game.away.teamID), homeHex = teamColors?(game.home.teamID)
+        header.awayColor = boxAccent(awayHex)
+        header.homeColor = boxAccent(homeHex)
+        header.awayLogo = LogoStore.shared.attachment(for: game.away.teamID, abbr: game.away.abbr, font: .systemFont(ofSize: 12))?.image
+        header.homeLogo = LogoStore.shared.attachment(for: game.home.teamID, abbr: game.home.abbr, font: .systemFont(ofSize: 12))?.image
+        if header.awayLogo == nil || header.homeLogo == nil, logoRetries < 4 {
+            logoRetries += 1
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in if self?.popover.isShown == true { self?.render() } }
         }
-        let statusText = game.scoresHidden ? (game.state == .live ? "LIVE" : "FINAL")
-            : (game.state == .live ? "LIVE · " + game.detail : game.detail)
-        let status = [statusText, game.round, game.network]
-            .compactMap { $0 }.joined(separator: " · ")
-        stack.addArrangedSubview(text(status, color: game.state == .live ? Palette.live : .secondaryLabelColor))
+        stack.addArrangedSubview(header)
         if game.state == .live, !game.scoresHidden, let s = game.situation {
             let ball = s.possessionID == game.home.teamID ? game.home : game.away
             if !s.text.isEmpty {
@@ -132,32 +140,32 @@ final class BoxScorePopover: NSObject {
                 stack.addArrangedSubview(text(play))
             }
         }
-        if game.state == .upcoming {
-            let recs = [game.away, game.home].compactMap { s in s.record.map { "\(abbr(s)) \($0)" } }
-            if !recs.isEmpty { stack.addArrangedSubview(text("Records: " + recs.joined(separator: "   "), color: .secondaryLabelColor)) }
-        }
-
         // Stats and leaders
         if game.scoresHidden {
             stack.addArrangedSubview(text("Scores are hidden (spoiler-free mode).", color: .secondaryLabelColor))
         } else if game.state != .upcoming {
             if let box, let a = box.lines[game.away.teamID], let h = box.lines[game.home.teamID], !a.stats.isEmpty {
-                let grid = NSGridView(views: [[NSTextField(labelWithString: ""), text(abbr(game.away), weight: .semibold),
-                                               text(abbr(game.home), weight: .semibold)]]
-                    + a.stats.enumerated().map { i, s in
-                        [text(s.label, color: .secondaryLabelColor), text(s.value),
-                         text(h.stats.indices.contains(i) ? h.stats[i].value : "–")]
-                    })
-                grid.columnSpacing = 14
-                grid.rowSpacing = 4
-                grid.column(at: 0).width = 52
-                grid.column(at: 1).width = 70
-                grid.column(at: 2).width = 70
-                stack.addArrangedSubview(grid)
-                for (side, line) in [(game.away, a), (game.home, h)] where !line.leaders.isEmpty {
-                    stack.addArrangedSubview(text(abbr(side), size: 11, weight: .semibold, color: .secondaryLabelColor))
-                    for l in line.leaders { stack.addArrangedSubview(text(l)) }
+                let bars = StatBarsView()
+                bars.awayColor = boxAccent(awayHex)
+                bars.homeColor = boxAccent(homeHex)
+                bars.awayName = abbr(game.away); bars.homeName = abbr(game.home)
+                bars.rows = a.stats.enumerated().map { i, s in
+                    StatBarsView.Row(label: s.label, away: s.value, home: h.stats.indices.contains(i) ? h.stats[i].value : "–")
                 }
+                stack.addArrangedSubview(bars)
+                let cards = LeaderCardsView()
+                cards.groups = [(game.away, a, boxAccent(awayHex)), (game.home, h, boxAccent(homeHex))].compactMap { side, line, color in
+                    guard !line.leaders.isEmpty else { return nil }
+                    let items = line.leaders.enumerated().map { n, l -> LeaderCardsView.Card in
+                        let parts = l.components(separatedBy: "  ")
+                        let id = line.leaderIDs.indices.contains(n) ? line.leaderIDs[n] : ""
+                        return LeaderCardsView.Card(kind: line.leaderKinds.indices.contains(n) ? line.leaderKinds[n] : "",
+                                                    name: parts.first ?? l, detail: parts.dropFirst().joined(separator: "  "),
+                                                    photo: PlayerPhotos.shared.image(for: id))
+                    }
+                    return (abbr(side), color, items)
+                }
+                stack.addArrangedSubview(cards)
                 if game.state == .live, game.situation?.lastPlay == nil, let play = box.lastPlay {
                     stack.addArrangedSubview(text("Last play", size: 11, weight: .semibold, color: .secondaryLabelColor))
                     stack.addArrangedSubview(text(play))

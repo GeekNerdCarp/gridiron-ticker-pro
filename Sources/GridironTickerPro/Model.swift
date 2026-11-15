@@ -545,6 +545,8 @@ struct BoxScore {
     struct Line {
         var stats: [(label: String, value: String)] = []
         var leaders: [String] = []
+        var leaderKinds: [String] = []   // "PASS", "RUSH", "REC", parallel to leaders
+        var leaderIDs: [String] = []     // ESPN athlete ids, for headshots
     }
     var lines: [String: Line] = [:]   // by team id
     var lastPlay: String?
@@ -571,6 +573,8 @@ extension ESPN {
         let suffix = ["C/ATT": "", "CAR": " car", "REC": " rec", "YDS": " yds", "TD": " TD", "INT": " INT"]
         for pb in r.boxscore?.players ?? [] {
             var leaders: [String] = []
+            var kinds: [String] = []
+            var ids: [String] = []
             for (name, rankBy, show) in groups {
                 guard let g = pb.statistics?.first(where: { $0.name == name }), let labels = g.labels,
                       let iRank = labels.firstIndex(of: rankBy) else { continue }
@@ -586,8 +590,12 @@ extension ESPN {
                     return st[i] + (suffix[l] ?? "")
                 }
                 leaders.append("\(top.athlete.displayName ?? "?")  " + bits.joined(separator: ", "))
+                ids.append(top.athlete.id ?? "")
+                kinds.append(["passing": "PASS", "rushing": "RUSH", "receiving": "REC"][name] ?? "")
             }
             box.lines[pb.team.id, default: BoxScore.Line()].leaders = leaders
+            box.lines[pb.team.id, default: BoxScore.Line()].leaderKinds = kinds
+            box.lines[pb.team.id, default: BoxScore.Line()].leaderIDs = ids
         }
         let drives = (r.drives?.previous?.compactMap { $0.value } ?? []) + [r.drives?.current].compactMap { $0 }
         let plays = drives.flatMap { ($0.plays ?? []).compactMap { $0.value } }

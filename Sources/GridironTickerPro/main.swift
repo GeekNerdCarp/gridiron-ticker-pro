@@ -580,6 +580,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ticker.onClick = { [weak self] i, x in self?.gameClicked(at: i, x: x) }
         boxPopover.onOpenESPN = { [weak self] g in self?.openESPN(g) }
         boxPopover.extraLines = { g in FantasyStore.shared.lines(in: g) }
+        PlayerPhotos.shared.onLoad = { [weak self] in self?.boxPopover.refreshIfShown() }
+        boxPopover.teamColors = { [weak self] id in self?.teamColors[id] }
         FantasyStore.shared.onChange = { [weak self] in self?.render(); self?.fantasyWindow.refresh() }
         fantasyWindow.onChange = { [weak self] in
             self?.render()
